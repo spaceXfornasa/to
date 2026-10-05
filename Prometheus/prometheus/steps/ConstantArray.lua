@@ -1,0 +1,1082 @@
+-- This Script is Part of the Prometheus Obfuscator by levno-710
+--
+-- ConstantArray.lua
+--
+-- This Script provides a Simple Obfuscation Step that wraps the entire Script into a function
+
+-- TODO: Wrapper Functions
+-- TODO: Proxy Object for indexing: e.g: ARR[X] becomes ARR + X
+
+local Step = require("prometheus.step");
+local Ast = require("prometheus.ast");
+local Scope = require("prometheus.scope");
+local visitast = require("prometheus.visitast");
+local util = require("prometheus.util")
+local Parser = require("prometheus.parser");
+local enums = require("prometheus.enums")
+
+local LuaVersion = enums.LuaVersion;
+local AstKind = Ast.AstKind;
+
+local ConstantArray = Step:extend();
+ConstantArray.Description = "This Step will Extract all Constants and put them into an Array at the beginning of the script";
+ConstantArray.Name = "Constant Array";
+
+ConstantArray.SettingsDescriptor = {
+	Threshold = {
+		name = "Threshold",
+		description = "The relative amount of nodes that will be affected",
+		type = "number",
+		default = 1,
+		min = 0,
+		max = 1,
+		aliases = { "Treshold" },
+	},
+	StringsOnly = {
+		name = "StringsOnly",
+		description = "Wether to only Extract Strings",
+		type = "boolean",
+		default = false,
+	},
+	Shuffle = {
+		name = "Shuffle",
+		description = "Wether to shuffle the order of Elements in the Array",
+		type = "boolean",
+		default = true,
+	},
+	Rotate = {
+		name = "Rotate",
+		description = "Wether to rotate the String Array by a specific (random) amount. This will be undone on runtime.",
+		type = "boolean",
+		default = true,
+	},
+	LocalWrapperThreshold = {
+		name = "LocalWrapperThreshold",
+		description = "The relative amount of nodes functions, that will get local wrappers",
+		type = "number",
+		default = 1,
+		min = 0,
+		max = 1,
+		aliases = { "LocalWrapperTreshold" },
+	},
+	LocalWrapperCount = {
+		name = "LocalWrapperCount",
+		description = "The number of Local wrapper Functions per scope. This only applies if LocalWrapperThreshold is greater than 0",
+		type = "number",
+		min = 0,
+		max = 512,
+		default = 0,
+	},
+	LocalWrapperArgCount = {
+		name = "LocalWrapperArgCount",
+		description = "The number of Arguments to the Local wrapper Functions",
+		type = "number",
+		min = 1,
+		default = 10,
+		max = 200,
+	};
+	MaxWrapperOffset = {
+		name = "MaxWrapperOffset",
+		description = "The Max Offset for the Wrapper Functions",
+		type = "number",
+		min = 0,
+		default = 65535,
+	};
+	Encoding = {
+		name = "Encoding",
+		description = "The Encoding to use for the Strings",
+		type = "enum",
+		default = "masked",
+		values = {
+			"none",
+			"masked",
+			"base64",
+			"base85",
+			"mixed",
+		},
+	},
+	LazyDecode = {
+		name = "LazyDecode",
+		description = "Keep masked strings encrypted in the constant array and decode only per access",
+		type = "boolean",
+		default = true,
+	}
+}
+
+local prefix_0, prefix_1;
+local function initPrefixes()
+	local charset = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!@£$%^&*()_+-=[]{}|:;<>,./?";
+	repeat
+		local a, b = math.random(1, #charset), math.random(1, #charset);
+		prefix_0 = charset:sub(a, a);
+		prefix_1 = charset:sub(b, b);
+	until prefix_0 ~= prefix_1
+end
+
+local function callNameGenerator(generatorFunction, ...)
+	if(type(generatorFunction) == "table") then
+		generatorFunction = generatorFunction.generateName;
+	end
+	return generatorFunction(...);
+end
+
+local function maskPayload(str, key, step)
+	local out = {};
+	local prev = key;
+	for i = 1, #str do
+		local b = string.byte(str, i);
+		local encoded = (b + prev) % 256;
+		out[i] = string.char(encoded);
+		prev = (encoded + i + step) % 256;
+	end
+	return table.concat(out);
+end
+
+-- Emit small runtime constants as arithmetic expressions. This keeps key material
+-- out of the stable `local x = 123` shape that regex decoders usually target.
+local function numExpr(n)
+	if n == 0 then
+		local k = math.random(16, 4096);
+		return "(" .. tostring(k) .. "-" .. tostring(k) .. ")";
+	end
+
+	local style = math.random(1, 5);
+	if style == 1 then
+		local k = math.random(16, 4096);
+		return "(" .. tostring(n + k) .. "-" .. tostring(k) .. ")";
+	elseif style == 2 then
+		local k = math.random(16, 4096);
+		return "(" .. tostring(n - k) .. "+" .. tostring(k) .. ")";
+	elseif style == 3 then
+		local a = math.random(2, 31);
+		local q = math.floor(n / a);
+		local r = n - q * a;
+		return "((" .. tostring(q) .. "*" .. tostring(a) .. ")+" .. tostring(r) .. ")";
+	elseif style == 4 then
+		local a = math.random(9, 99);
+		local b = math.random(101, 999);
+		return "((" .. tostring(n + a + b) .. "-" .. tostring(a) .. ")-" .. tostring(b) .. ")";
+	else
+		local a = math.random(9, 99);
+		local b = math.random(101, 999);
+		return "((" .. tostring(n + a + b) .. ")-(" .. tostring(a) .. "+" .. tostring(b) .. "))";
+	end
+end
+
+function ConstantArray:init(_) end
+
+function ConstantArray:createArray()
+	local entries = {};
+	for i, v in ipairs(self.constants) do
+		if type(v) == "string" then
+			v = self:encode(v);
+		end
+		entries[i] = Ast.TableEntry(Ast.ConstantNode(v));
+	end
+	return Ast.TableConstructorExpression(entries);
+end
+
+function ConstantArray:indexing(index, data)
+	if self.LocalWrapperCount > 0 and data.functionData.local_wrappers then
+		local wrappers = data.functionData.local_wrappers;
+		local wrapper = wrappers[math.random(#wrappers)];
+
+		local args = {};
+		local encodedIndex = (index - self.wrapperOffset) * self.wrapperScale;
+		local ofs = encodedIndex - wrapper.offset;
+		for i = 1, self.LocalWrapperArgCount, 1 do
+			if i == wrapper.arg then
+				args[i] = Ast.NumberExpression(ofs);
+			else
+				args[i] = Ast.NumberExpression(math.random(ofs - 1024, ofs + 1024));
+			end
+		end
+
+		data.scope:addReferenceToHigherScope(wrappers.scope, wrappers.id);
+		return Ast.FunctionCallExpression(Ast.IndexExpression(
+			Ast.VariableExpression(wrappers.scope, wrappers.id),
+			Ast.StringExpression(wrapper.index)
+		), args);
+	else
+		data.scope:addReferenceToHigherScope(self.rootScope, self.wrapperId);
+		return Ast.FunctionCallExpression(Ast.VariableExpression(self.rootScope, self.wrapperId), {
+			Ast.NumberExpression((index - self.wrapperOffset) * self.wrapperScale);
+		});
+	end
+end
+
+function ConstantArray:getConstant(value, data)
+	if(self.lookup[value]) then
+		return self:indexing(self.lookup[value], data)
+	end
+	local idx = #self.constants + 1;
+	self.constants[idx] = value;
+	self.lookup[value] = idx;
+	return self:indexing(idx, data);
+end
+
+function ConstantArray:addConstant(value)
+	if(self.lookup[value]) then
+		return
+	end
+	local idx = #self.constants + 1;
+	self.constants[idx] = value;
+	self.lookup[value] = idx;
+end
+
+local function reverse(t, i, j)
+	while i < j do
+	  t[i], t[j] = t[j], t[i]
+	  i, j = i+1, j-1
+	end
+end
+
+local function rotate(t, d, n)
+	n = n or #t
+	d = (d or 1) % n
+	reverse(t, 1, n)
+	reverse(t, 1, d)
+	reverse(t, d+1, n)
+end
+
+local rotateCode = [=[
+	for i, v in ipairs({{1, LEN}, {1, SHIFT}, {SHIFT + 1, LEN}}) do
+		while v[1] < v[2] do
+			ARR[v[1]], ARR[v[2]], v[1], v[2] = ARR[v[2]], ARR[v[1]], v[1] + 1, v[2] - 1
+		end
+	end
+]=];
+
+function ConstantArray:addRotateCode(ast, shift)
+	local parser = Parser:new({
+		LuaVersion = LuaVersion.Lua51;
+	});
+
+	local newAst = parser:parse(string.gsub(string.gsub(rotateCode, "SHIFT", tostring(shift)), "LEN", tostring(#self.constants)));
+	local forStat = newAst.body.statements[1];
+	forStat.body.scope:setParent(ast.body.scope);
+	visitast(newAst, nil, function(node, data)
+		if(node.kind == AstKind.VariableExpression) then
+			if(node.scope:getVariableName(node.id) == "ARR") then
+				data.scope:removeReferenceToHigherScope(node.scope, node.id);
+				data.scope:addReferenceToHigherScope(self.rootScope, self.arrId);
+				node.scope = self.rootScope;
+				node.id = self.arrId;
+			end
+		end
+	end)
+
+	table.insert(ast.body.statements, 1, forStat);
+end
+
+function ConstantArray:addDecodeCode(ast)
+	if self.Encoding == "masked" and self.LazyDecode then
+		-- Lazy masked mode intentionally does not decode the whole constant array at
+		-- startup. The wrapper decodes one value at a time, so dynamic memory dumps do
+		-- not get a single plaintext array after bootstrap.
+		return;
+	end
+
+	if self.Encoding == "masked" then
+		local maskedDecodeCode = [[
+	do ]] .. table.concat(util.shuffle{
+		"local len = string.len;",
+		"local byte = string.byte;",
+		"local strchar = string.char;",
+		"local concat = table.concat;",
+		"local type = type;",
+		"local arr = ARR;",
+	}) .. [[
+		local maskKey = ]] .. numExpr(self.PayloadMaskKey) .. [[;
+		local maskStep = ]] .. numExpr(self.PayloadMaskStep) .. [[;
+		local gate = ((maskKey * 3 + maskStep) % 251);
+		for i = 1, #arr do
+			local data = arr[i];
+			if type(data) == "string" then
+				local out = {};
+				local prev = maskKey;
+				local noise = (gate + i) % 17;
+				for j = 1, len(data) do
+					local encoded = byte(data, j);
+					local decoded = (encoded - prev) % 256;
+					if noise == 3001 then
+						decoded = (decoded + noise) % 256;
+					end
+					out[j] = strchar(decoded);
+					prev = (encoded + j + maskStep) % 256;
+				end
+				arr[i] = concat(out);
+			end
+		end
+	end
+]];
+
+		local parser = Parser:new({
+			LuaVersion = LuaVersion.Lua51;
+		});
+
+		local newAst = parser:parse(maskedDecodeCode);
+		local forStat = newAst.body.statements[1];
+		forStat.body.scope:setParent(ast.body.scope);
+
+		visitast(newAst, nil, function(node, data)
+			if(node.kind == AstKind.VariableExpression) then
+				if(node.scope:getVariableName(node.id) == "ARR") then
+					data.scope:removeReferenceToHigherScope(node.scope, node.id);
+					data.scope:addReferenceToHigherScope(self.rootScope, self.arrId);
+					node.scope = self.rootScope;
+					node.id = self.arrId;
+				end
+			end
+		end)
+
+		table.insert(ast.body.statements, 1, forStat);
+	elseif self.Encoding == "base64" then
+		local base64DecodeCode = [[
+	do ]] .. table.concat(util.shuffle{
+		"local lookup = LOOKUP_TABLE;",
+		"local len = string.len;",
+		"local sub = string.sub;",
+		"local floor = math.floor;",
+		"local strchar = string.char;",
+		"local insert = table.insert;",
+		"local concat = table.concat;",
+		"local byte = string.byte;",
+		"local type = type;",
+		"local arr = ARR;",
+	}) .. [[
+		local maskKey = ]] .. numExpr(self.PayloadMaskKey) .. [[;
+		local maskStep = ]] .. numExpr(self.PayloadMaskStep) .. [[;
+		local function unmask(data)
+			local out = {};
+			local prev = maskKey;
+			for j = 1, len(data) do
+				local encoded = byte(data, j);
+				local decoded = (encoded - prev) % 256;
+				out[j] = strchar(decoded);
+				prev = (encoded + j + maskStep) % 256;
+			end
+			return concat(out);
+		end
+		for i = 1, #arr do
+			local data = arr[i];
+			if type(data) == "string" then
+				local length = len(data)
+				local parts = {}
+				local index = 1
+				local value = 0
+				local count = 0
+				while index <= length do
+					local char = sub(data, index, index)
+					local code = lookup[char]
+					if code then
+						value = value + code * (64 ^ (3 - count))
+						count = count + 1
+						if count == 4 then
+							count = 0
+							local c1 = floor(value / 65536)
+							local c2 = floor(value % 65536 / 256)
+							local c3 = value % 256
+							insert(parts, strchar(c1, c2, c3))
+							value = 0
+						end
+					elseif char == "=" then
+						insert(parts, strchar(floor(value / 65536)));
+						if index >= length or sub(data, index + 1, index + 1) ~= "=" then
+							insert(parts, strchar(floor(value % 65536 / 256)));
+						end
+						break
+					end
+					index = index + 1
+				end
+				arr[i] = unmask(concat(parts))
+			end
+		end
+	end
+]];
+
+		local parser = Parser:new({
+			LuaVersion = LuaVersion.Lua51;
+		});
+
+		local newAst = parser:parse(base64DecodeCode);
+		local forStat = newAst.body.statements[1];
+		forStat.body.scope:setParent(ast.body.scope);
+
+		visitast(newAst, nil, function(node, data)
+			if(node.kind == AstKind.VariableExpression) then
+				if(node.scope:getVariableName(node.id) == "ARR") then
+					data.scope:removeReferenceToHigherScope(node.scope, node.id);
+					data.scope:addReferenceToHigherScope(self.rootScope, self.arrId);
+					node.scope = self.rootScope;
+					node.id = self.arrId;
+				end
+
+				if(node.scope:getVariableName(node.id) == "LOOKUP_TABLE") then
+					data.scope:removeReferenceToHigherScope(node.scope, node.id);
+					return self:createBase64Lookup();
+				end
+			end
+		end)
+
+		table.insert(ast.body.statements, 1, forStat);
+	elseif self.Encoding == "base85" then
+		local base85DecodeCode = [[
+	do ]] .. table.concat(util.shuffle{
+		"local lookup = LOOKUP_TABLE;",
+		"local len = string.len;",
+		"local sub = string.sub;",
+		"local floor = math.floor;",
+		"local strchar = string.char;",
+		"local insert = table.insert;",
+		"local concat = table.concat;",
+		"local byte = string.byte;",
+		"local type = type;",
+		"local arr = ARR;",
+	}) .. [[
+		local maskKey = ]] .. numExpr(self.PayloadMaskKey) .. [[;
+		local maskStep = ]] .. numExpr(self.PayloadMaskStep) .. [[;
+		local function unmask(data)
+			local out = {};
+			local prev = maskKey;
+			for j = 1, len(data) do
+				local encoded = byte(data, j);
+				local decoded = (encoded - prev) % 256;
+				out[j] = strchar(decoded);
+				prev = (encoded + j + maskStep) % 256;
+			end
+			return concat(out);
+		end
+		for i = 1, #arr do
+			local data = arr[i];
+			if type(data) == "string" then
+				local length = len(data)
+				local parts = {}
+				local index = 1
+				while index <= length do
+					local remain = length - index + 1
+					local count = remain >= 5 and 5 or remain
+					local value = 0
+					local valid = count > 1
+
+					for j = 0, 4 do
+						local code
+						if j < count then
+							local ch = sub(data, index + j, index + j)
+							code = lookup[ch]
+							if not code then
+								valid = false
+								break
+							end
+						else
+							code = 84
+						end
+						value = value * 85 + code
+					end
+
+					if valid then
+						local b1 = floor(value / 16777216) % 256
+						local b2 = floor(value / 65536) % 256
+						local b3 = floor(value / 256) % 256
+						local b4 = value % 256
+						if count == 5 then
+							insert(parts, strchar(b1, b2, b3, b4))
+						elseif count == 4 then
+							insert(parts, strchar(b1, b2, b3))
+						elseif count == 3 then
+							insert(parts, strchar(b1, b2))
+						elseif count == 2 then
+							insert(parts, strchar(b1))
+						end
+					end
+
+					index = index + count
+				end
+				arr[i] = unmask(concat(parts))
+			end
+		end
+	end
+]];
+
+		local parser = Parser:new({
+			LuaVersion = LuaVersion.Lua51;
+		});
+
+		local newAst = parser:parse(base85DecodeCode);
+		local forStat = newAst.body.statements[1];
+		forStat.body.scope:setParent(ast.body.scope);
+
+		visitast(newAst, nil, function(node, data)
+			if(node.kind == AstKind.VariableExpression) then
+				if(node.scope:getVariableName(node.id) == "ARR") then
+					data.scope:removeReferenceToHigherScope(node.scope, node.id);
+					data.scope:addReferenceToHigherScope(self.rootScope, self.arrId);
+					node.scope = self.rootScope;
+					node.id = self.arrId;
+				end
+
+				if(node.scope:getVariableName(node.id) == "LOOKUP_TABLE") then
+					data.scope:removeReferenceToHigherScope(node.scope, node.id);
+					return self:createBase85Lookup();
+				end
+			end
+		end)
+
+		table.insert(ast.body.statements, 1, forStat);
+	elseif self.Encoding == "mixed" then
+		local mixedDecodeCode = [[
+	do ]] .. table.concat(util.shuffle{
+		"local lookup64 = LOOKUP_TABLE_64;",
+		"local lookup85 = LOOKUP_TABLE_85;",
+		"local len = string.len;",
+		"local sub = string.sub;",
+		"local floor = math.floor;",
+		"local strchar = string.char;",
+		"local insert = table.insert;",
+		"local concat = table.concat;",
+		"local byte = string.byte;",
+		"local type = type;",
+		"local arr = ARR;",
+	}) .. [[
+		local maskKey = ]] .. numExpr(self.PayloadMaskKey) .. [[;
+		local maskStep = ]] .. numExpr(self.PayloadMaskStep) .. [[;
+		local function unmask(data)
+			local out = {};
+			local prev = maskKey;
+			for j = 1, len(data) do
+				local encoded = byte(data, j);
+				local decoded = (encoded - prev) % 256;
+				out[j] = strchar(decoded);
+				prev = (encoded + j + maskStep) % 256;
+			end
+			return concat(out);
+		end
+		for i = 1, #arr do
+			local data = arr[i];
+			if type(data) == "string" then
+				local first = sub(data, 1, 1)
+				if first == "]]..prefix_0..[[" then
+					data = sub(data, 2)
+					local length = len(data)
+					local parts = {}
+					local index = 1
+					local value = 0
+					local count = 0
+					while index <= length do
+						local char = sub(data, index, index)
+						local code = lookup64[char]
+						if code then
+							value = value + code * (64 ^ (3 - count))
+							count = count + 1
+							if count == 4 then
+								count = 0
+								local c1 = floor(value / 65536)
+								local c2 = floor(value % 65536 / 256)
+								local c3 = value % 256
+								insert(parts, strchar(c1, c2, c3))
+								value = 0
+							end
+						elseif char == "=" then
+							insert(parts, strchar(floor(value / 65536)));
+							if index >= length or sub(data, index + 1, index + 1) ~= "=" then
+								insert(parts, strchar(floor(value % 65536 / 256)));
+							end
+							break
+						end
+						index = index + 1
+					end
+					arr[i] = unmask(concat(parts))
+				elseif first == "]]..prefix_1..[[" then
+					data = sub(data, 2)
+					local length = len(data)
+					local parts = {}
+					local idx = 1
+					while idx <= length do
+						local remain = length - idx + 1
+						local count = remain >= 5 and 5 or remain
+						local value = 0
+						local valid = count > 1
+
+						for j = 0, 4 do
+							local code
+							if j < count then
+								local ch = sub(data, idx + j, idx + j)
+								code = lookup85[ch]
+								if not code then
+									valid = false
+									break
+								end
+							else
+								code = 84
+							end
+							value = value * 85 + code
+						end
+
+						if valid then
+							local b1 = floor(value / 16777216) % 256
+							local b2 = floor(value / 65536) % 256
+							local b3 = floor(value / 256) % 256
+							local b4 = value % 256
+							if count == 5 then
+								insert(parts, strchar(b1, b2, b3, b4))
+							elseif count == 4 then
+								insert(parts, strchar(b1, b2, b3))
+							elseif count == 3 then
+								insert(parts, strchar(b1, b2))
+							elseif count == 2 then
+								insert(parts, strchar(b1))
+							end
+						end
+
+						idx = idx + count
+					end
+					arr[i] = unmask(concat(parts))
+				end
+			end
+		end
+	end
+]];
+
+		local parser = Parser:new({
+			LuaVersion = LuaVersion.Lua51;
+		});
+
+		local newAst = parser:parse(mixedDecodeCode);
+		local forStat = newAst.body.statements[1];
+		forStat.body.scope:setParent(ast.body.scope);
+
+		visitast(newAst, nil, function(node, data)
+			if(node.kind == AstKind.VariableExpression) then
+				if(node.scope:getVariableName(node.id) == "ARR") then
+					data.scope:removeReferenceToHigherScope(node.scope, node.id);
+					data.scope:addReferenceToHigherScope(self.rootScope, self.arrId);
+					node.scope = self.rootScope;
+					node.id = self.arrId;
+				end
+
+				if(node.scope:getVariableName(node.id) == "LOOKUP_TABLE_64") then
+					data.scope:removeReferenceToHigherScope(node.scope, node.id);
+					return self:createBase64Lookup();
+				end
+
+				if(node.scope:getVariableName(node.id) == "LOOKUP_TABLE_85") then
+					data.scope:removeReferenceToHigherScope(node.scope, node.id);
+					return self:createBase85Lookup();
+				end
+			end
+		end)
+
+		table.insert(ast.body.statements, 1, forStat);
+	end
+end
+
+function ConstantArray:createBase64Lookup()
+	local entries = {};
+	local i = 0;
+	for char in string.gmatch(self.base64chars, ".") do
+		table.insert(entries, Ast.KeyedTableEntry(Ast.StringExpression(char), Ast.NumberExpression(i)));
+		i = i + 1;
+	end
+	util.shuffle(entries);
+	return Ast.TableConstructorExpression(entries);
+end
+
+function ConstantArray:createBase85Lookup()
+	local entries = {};
+	local i = 0;
+	for char in string.gmatch(self.base85chars, ".") do
+		table.insert(entries, Ast.KeyedTableEntry(Ast.StringExpression(char), Ast.NumberExpression(i)));
+		i = i + 1;
+	end
+	util.shuffle(entries);
+	return Ast.TableConstructorExpression(entries);
+end
+
+
+function ConstantArray:createLazyMaskedWrapperFunction()
+	local parser = Parser:new({
+		LuaVersion = LuaVersion.Lua51;
+	});
+
+	local decodedIndex = "((ARG / " .. numExpr(self.wrapperScale) .. ")";
+	if self.wrapperOffset < 0 then
+		decodedIndex = decodedIndex .. " - " .. numExpr(-self.wrapperOffset) .. ")";
+	else
+		decodedIndex = decodedIndex .. " + " .. numExpr(self.wrapperOffset) .. ")";
+	end
+
+	local wrapperCode = [[
+	local function WRAP(ARG)
+		local data = ARR[]] .. decodedIndex .. [[];
+		if type(data) ~= "string" then
+			return data;
+		end
+
+		local len = string.len;
+		local byte = string.byte;
+		local strchar = string.char;
+		local concat = table.concat;
+		local out = {};
+		local prev = ]] .. numExpr(self.PayloadMaskKey) .. [[;
+		local step = ]] .. numExpr(self.PayloadMaskStep) .. [[;
+		local gate = ((prev * 3 + step) % 251);
+		for j = 1, len(data) do
+			local encoded = byte(data, j);
+			local decoded = (encoded - prev) % 256;
+			if gate == 3001 then
+				decoded = (decoded + gate) % 256;
+			end
+			out[j] = strchar(decoded);
+			prev = (encoded + j + step) % 256;
+		end
+		return concat(out);
+	end
+	]];
+
+	local newAst = parser:parse(wrapperCode);
+	local funStat = newAst.body.statements[1];
+	funStat.scope = self.rootScope;
+	funStat.id = self.wrapperId;
+	funStat.body.scope:setParent(self.rootScope);
+
+	visitast(newAst, nil, function(node, data)
+		if(node.kind == AstKind.VariableExpression) then
+			if(node.scope:getVariableName(node.id) == "ARR") then
+				data.scope:removeReferenceToHigherScope(node.scope, node.id);
+				data.scope:addReferenceToHigherScope(self.rootScope, self.arrId);
+				node.scope = self.rootScope;
+				node.id = self.arrId;
+			end
+		end
+	end)
+
+	return funStat;
+end
+
+function ConstantArray:encode(str)
+	if self.Encoding ~= "none" then
+		str = maskPayload(str, self.PayloadMaskKey, self.PayloadMaskStep);
+	end
+	if self.Encoding == "none" then
+		return str;
+	elseif self.Encoding == "masked" then
+		-- Raw masked bytes are emitted as a Lua string literal. The unparser escapes
+		-- unsafe bytes as decimal escapes, so the output no longer has a base64/base85
+		-- surface (`==`, fixed 64-char alphabet, 5-byte base85 cadence, etc.).
+		return str;
+	elseif self.Encoding == "base64" then
+		return ((str:gsub('.', function(x)
+			local r,b='',x:byte()
+			for i=8,1,-1 do r=r..(b%2^i-b%2^(i-1)>0 and '1' or '0') end
+			return r;
+		end)..'0000'):gsub('%d%d%d?%d?%d?%d?', function(x)
+			if (#x < 6) then return '' end
+			local c=0
+			for i=1,6 do c=c+(x:sub(i,i)=='1' and 2^(6-i) or 0) end
+			return self.base64chars:sub(c+1,c+1)
+		end)..({ '', '==', '=' })[#str%3+1]);
+	elseif self.Encoding == "base85" then
+		local result = {};
+		local len = #str;
+		local pos = 1;
+
+		while pos <= len do
+			local rem = len - pos + 1;
+			local count = rem >= 4 and 4 or rem;
+			local b1, b2, b3, b4 = string.byte(str, pos, pos + count - 1);
+			b1, b2, b3, b4 = b1 or 0, b2 or 0, b3 or 0, b4 or 0;
+
+			local value = ((b1 * 256 + b2) * 256 + b3) * 256 + b4;
+			local chars = {};
+			for i = 5, 1, -1 do
+				local code = (value % 85) + 1;
+				chars[i] = self.base85chars:sub(code, code);
+				value = math.floor(value / 85);
+			end
+
+			result[#result + 1] = table.concat(chars, "", 1, count + 1);
+			pos = pos + count;
+		end
+
+		return table.concat(result);
+	elseif self.Encoding == "mixed" then
+		if math.random() < 0.5 then
+			local encoded = ((str:gsub('.', function(x)
+				local r,b='',x:byte()
+				for i=8,1,-1 do r=r..(b%2^i-b%2^(i-1)>0 and '1' or '0') end
+				return r;
+			end)..'0000'):gsub('%d%d%d?%d?%d?%d?', function(x)
+				if (#x < 6) then return '' end
+				local c=0
+				for i=1,6 do c=c+(x:sub(i,i)=='1' and 2^(6-i) or 0) end
+				return self.base64chars:sub(c+1,c+1)
+			end)..({ '', '==', '=' })[#str%3+1]);
+			return prefix_0 .. encoded;
+		else
+			local result = {};
+			local len = #str;
+			local pos = 1;
+
+			while pos <= len do
+				local rem = len - pos + 1;
+				local count = rem >= 4 and 4 or rem;
+				local b1, b2, b3, b4 = string.byte(str, pos, pos + count - 1);
+				b1 = b1 or 0;
+				b2 = b2 or 0;
+				b3 = b3 or 0;
+				b4 = b4 or 0;
+
+				local value = ((b1 * 256 + b2) * 256 + b3) * 256 + b4;
+				local chars = {};
+				for i = 5, 1, -1 do
+					local code = (value % 85) + 1;
+					chars[i] = self.base85chars:sub(code, code);
+					value = math.floor(value / 85);
+				end
+
+				result[#result + 1] = table.concat(chars, "", 1, count + 1);
+				pos = pos + count;
+			end
+
+			return prefix_1 .. table.concat(result);
+		end
+	end
+end
+
+function ConstantArray:apply(ast, pipeline)
+	initPrefixes();
+	self.rootScope = ast.body.scope;
+	self.arrId = self.rootScope:addVariable();
+
+	self.base64chars = table.concat(util.shuffle{
+		"A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z",
+		"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z",
+		"0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
+		"+", "/",
+	});
+
+	self.base85chars = table.concat(util.shuffle{
+		"!", "\"", "#", "$", "%", "&", "'", "(", ")", "*", "+", ",", "-", ".", "/",
+		"0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
+		":", ";", "<", "=", ">", "?", "@",
+		"A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O",
+		"P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z",
+		"[", "\\", "]", "^", "_", "`",
+		"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o",
+		"p", "q", "r", "s", "t", "u",
+	});
+
+	self.constants = {};
+	self.lookup = {};
+	self.PayloadMaskKey = math.random(1, 255);
+	self.PayloadMaskStep = math.random(1, 255);
+	self.wrapperScale = math.random(2, 23);
+
+	-- Extract Constants
+	visitast(ast, nil, function(node, data)
+		-- Apply only to some nodes
+		if math.random() <= self.Threshold then
+			node.__apply_constant_array = true;
+			if node.kind == AstKind.StringExpression then
+				self:addConstant(node.value);
+			elseif not self.StringsOnly then
+				if node.isConstant then
+					if node.value ~= nil then
+						self:addConstant(node.value);
+					end
+				end
+			end
+		end
+	end);
+
+	-- Shuffle Array
+	if self.Shuffle then
+		self.constants = util.shuffle(self.constants);
+		self.lookup = {};
+		for i, v in ipairs(self.constants) do
+			self.lookup[v] = i;
+		end
+	end
+
+	-- Set Wrapper Function Offset
+	self.wrapperOffset = math.random(-self.MaxWrapperOffset, self.MaxWrapperOffset);
+	self.wrapperId = self.rootScope:addVariable();
+
+	visitast(ast, function(node, data)
+		-- Add Local Wrapper Functions
+		if self.LocalWrapperCount > 0 and node.kind == AstKind.Block and node.isFunctionBlock and math.random() <= self.LocalWrapperThreshold then
+			local id = node.scope:addVariable()
+			data.functionData.local_wrappers = {
+				id = id;
+				scope = node.scope,
+			};
+			local nameLookup = {};
+			for i = 1, self.LocalWrapperCount, 1 do
+				local name;
+				repeat
+					name = callNameGenerator(pipeline.namegenerator, math.random(1, self.LocalWrapperArgCount * 16));
+				until not nameLookup[name];
+				nameLookup[name] = true;
+
+				local offset = math.random(-self.MaxWrapperOffset, self.MaxWrapperOffset);
+				local argPos = math.random(1, self.LocalWrapperArgCount);
+
+				data.functionData.local_wrappers[i] = {
+					arg = argPos,
+					index = name,
+					offset =  offset,
+				};
+				data.functionData.__used = false;
+			end
+		end
+		if node.__apply_constant_array then
+			data.functionData.__used = true;
+		end
+	end, function(node, data)
+		-- Actually insert Statements to get the Constant Values
+		if node.__apply_constant_array then
+			if node.kind == AstKind.StringExpression then
+				return self:getConstant(node.value, data);
+			elseif not self.StringsOnly then
+				if node.isConstant then
+					return node.value ~= nil and self:getConstant(node.value, data);
+				end
+			end
+			node.__apply_constant_array = nil;
+		end
+
+		-- Insert Local Wrapper Declarations
+		if self.LocalWrapperCount > 0 and node.kind == AstKind.Block and node.isFunctionBlock and data.functionData.local_wrappers and data.functionData.__used then
+			data.functionData.__used = nil;
+			local elems = {};
+			local wrappers = data.functionData.local_wrappers;
+			for i = 1, self.LocalWrapperCount, 1 do
+				local wrapper = wrappers[i];
+				local argPos = wrapper.arg;
+				local offset = wrapper.offset;
+				local name = wrapper.index;
+
+				local funcScope = Scope:new(node.scope);
+
+				local arg = nil;
+				local args = {};
+
+				for i = 1, self.LocalWrapperArgCount, 1 do
+					args[i] = funcScope:addVariable();
+					if i == argPos then
+						arg = args[i];
+					end
+				end
+
+				local addSubArg;
+
+				-- Create add and Subtract code
+				if offset < 0 then
+					addSubArg = Ast.SubExpression(Ast.VariableExpression(funcScope, arg), Ast.NumberExpression(-offset));
+				else
+					addSubArg = Ast.AddExpression(Ast.VariableExpression(funcScope, arg), Ast.NumberExpression(offset));
+				end
+
+				funcScope:addReferenceToHigherScope(self.rootScope, self.wrapperId);
+				local callArg = Ast.FunctionCallExpression(Ast.VariableExpression(self.rootScope, self.wrapperId), {
+					addSubArg
+				});
+
+				local fargs = {};
+				for i, v in ipairs(args) do
+					fargs[i] = Ast.VariableExpression(funcScope, v);
+				end
+
+				elems[i] = Ast.KeyedTableEntry(
+					Ast.StringExpression(name),
+					Ast.FunctionLiteralExpression(fargs, Ast.Block({
+						Ast.ReturnStatement({
+							callArg
+						});
+					}, funcScope))
+				)
+			end
+			table.insert(node.statements, 1, Ast.LocalVariableDeclaration(node.scope, {
+				wrappers.id
+			}, {
+				Ast.TableConstructorExpression(elems)
+			}));
+		end
+	end);
+
+	self:addDecodeCode(ast);
+
+	local steps = util.shuffle({
+		-- Add Wrapper Function Code
+		function()
+			if self.Encoding == "masked" and self.LazyDecode then
+				-- In lazy mode the array remains masked. The wrapper decodes only the
+				-- requested entry, which makes post-bootstrap memory dumps and simple
+				-- dynamic constant-array dumps much less useful.
+				table.insert(ast.body.statements, 1, self:createLazyMaskedWrapperFunction());
+				return;
+			end
+
+			local funcScope = Scope:new(self.rootScope);
+			-- Add Reference to Array
+			funcScope:addReferenceToHigherScope(self.rootScope, self.arrId);
+
+			local arg = funcScope:addVariable();
+			local addSubArg;
+
+			-- Decode the externally supplied constant-array index. The public callsite passes
+			-- a scaled value, so simple wrapper-call scanners no longer recover the raw index
+			-- by just adding/subtracting wrapperOffset.
+			local decodedArg = Ast.DivExpression(Ast.VariableExpression(funcScope, arg), Ast.NumberExpression(self.wrapperScale));
+			if self.wrapperOffset < 0 then
+				addSubArg = Ast.SubExpression(decodedArg, Ast.NumberExpression(-self.wrapperOffset));
+			else
+				addSubArg = Ast.AddExpression(decodedArg, Ast.NumberExpression(self.wrapperOffset));
+			end
+
+			-- Create and Add the Function Declaration
+			table.insert(ast.body.statements, 1, Ast.LocalFunctionDeclaration(self.rootScope, self.wrapperId, {
+				Ast.VariableExpression(funcScope, arg)
+			}, Ast.Block({
+				Ast.ReturnStatement({
+					Ast.IndexExpression(
+						Ast.VariableExpression(self.rootScope, self.arrId),
+						addSubArg
+					)
+				});
+			}, funcScope)));
+
+			-- Resulting Code:
+			-- function xy(a)
+			-- 		return ARR[a - 10]
+			-- end
+		end,
+		-- Rotate Array and Add unrotate code
+		function()
+			if self.Rotate and #self.constants > 1 then
+				local shift = math.random(1, #self.constants - 1);
+
+				rotate(self.constants, -shift);
+				self:addRotateCode(ast, shift);
+			end
+		end,
+	});
+
+	for i, f in ipairs(steps) do
+		f();
+	end
+
+	-- Add the Array Declaration
+	table.insert(ast.body.statements, 1, Ast.LocalVariableDeclaration(self.rootScope, {self.arrId}, {self:createArray()}));
+
+	self.rootScope = nil;
+	self.arrId = nil;
+
+	self.constants = nil;
+	self.lookup = nil;
+	self.PayloadMaskKey = nil;
+	self.PayloadMaskStep = nil;
+	self.wrapperScale = nil;
+end
+
+return ConstantArray;
