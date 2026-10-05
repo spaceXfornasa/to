@@ -1,0 +1,24 @@
+{
+  "name": "stealthx-discord-bot",
+  "version": "3.0.0",
+  "private": true,
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "dev": "tsx src/index.ts",
+    "build": "tsc --noEmit",
+    "check": "tsc --noEmit",
+    "obfuscate": "node scripts/obfuscate.js",
+    "benchmark:vm": "node scripts/benchmark-vm.js",
+    "test": "node --test qa/*.test.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.21.0",
+    "dotenv": "^17.2.2",
+    "wasmoon": "^1.16.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "tsx": "^4.19.4",
+    "typescript": "^5.9.2"
+  }
+}
