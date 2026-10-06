@@ -9,6 +9,9 @@ local function shuffle(t)
 end
 local function array(t) return "{" .. table.concat(t, ",") .. "}" end
 local function choice(t) return t[math.random(#t)] end
+local function quoteString(value)
+    return string.format("%q", value)
+end
 local WIRE_ALPHABET = "!#$%&'()*+,-./:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]^_`abcdefghijklmnopqrstuvwxyz{|}~"
 local WIRE_BASE = #WIRE_ALPHABET
 local WIRE_WORD_WIDTH = 5
@@ -417,13 +420,13 @@ function R.emit(protos, constants, luaVersion, options)
             for i,value in ipairs(captures) do digest=(digest*digestMul+value+i*digestKeyMix)%digestMod end
         end
         local record={}
-        record[pStream]=encodeWords(stream)
-        record[pKey]=encodeWord(key)
-        record[pParams]=encodeWords(params)
-        record[pCaptures]=encodeWords(captures)
-        record[pDigest]=encodeWord((digest+key*digestMaskMul+mode*digestSaltMix)%digestMod)
+        record[pStream]=quoteString(encodeWords(stream))
+        record[pKey]=quoteString(encodeWord(key))
+        record[pParams]=quoteString(encodeWords(params))
+        record[pCaptures]=quoteString(encodeWords(captures))
+        record[pDigest]=quoteString(encodeWord((digest+key*digestMaskMul+mode*digestSaltMix)%digestMod))
         record[pMode]=mode
-        record[pCacheKey]=encodeWord(cacheKey)
+        record[pCacheKey]=quoteString(encodeWord(cacheKey))
         serialized[pid]=array(record)
     end
     local encrypted = {}
@@ -458,9 +461,9 @@ function R.emit(protos, constants, luaVersion, options)
         for i,cipher in ipairs(bytes) do digest=(digest*constDigestMul+cipher+i*constDigestIndexMix)%digestMod end
         local record={}
         record[cMode]=mode
-        record[cKey]=encodeWord(key)
-        record[cBytes]=encodeBytes(bytes)
-        record[cDigest]=encodeWord((digest+key*constDigestMaskMul+mode*digestKeyMix)%digestMod)
+        record[cKey]=quoteString(encodeWord(key))
+        record[cBytes]=quoteString(encodeBytes(bytes))
+        record[cDigest]=quoteString(encodeWord((digest+key*constDigestMaskMul+mode*digestKeyMix)%digestMod))
         encrypted[id]=array(record)
     end
     local emittedHandlers={}
