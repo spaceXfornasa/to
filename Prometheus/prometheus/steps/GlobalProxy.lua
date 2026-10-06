@@ -1,4 +1,4 @@
--- This Script is Part of the ByteCode Obfuscator hardening layer
+-- This Script is Part of the Stealth-X Obfuscator hardening layer
 --
 -- GlobalProxy.lua
 --

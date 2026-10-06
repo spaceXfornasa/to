@@ -9,12 +9,51 @@ local function shuffle(t)
 end
 local function array(t) return "{" .. table.concat(t, ",") .. "}" end
 local function choice(t) return t[math.random(#t)] end
+local WIRE_ALPHABET = "!#$%&'()*+,-./:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]^_`abcdefghijklmnopqrstuvwxyz{|}~"
+local WIRE_BASE = #WIRE_ALPHABET
+local WIRE_WORD_WIDTH = 5
+local WIRE_BYTE_WIDTH = 2
+
 local function randomIdent(len)
     local first="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-    local rest=first.."0123456789_"
+    local rest=first.."abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_"
     local out={}
     local p=math.random(#first); out[1]=first:sub(p,p)
-    for i=2,len do local n=math.random(#rest); out[i]=rest:sub(n,n) end
+    for i=2,len do
+        local n=math.random(#rest)
+        out[i]=rest:sub(n,n)
+    end
+    return table.concat(out)
+end
+
+local function encodeWord(n)
+    n = math.floor(n or 0)
+    local out = {}
+    for i = WIRE_WORD_WIDTH, 1, -1 do
+        local digit = n % WIRE_BASE
+        out[i] = WIRE_ALPHABET:sub(digit + 1, digit + 1)
+        n = math.floor(n / WIRE_BASE)
+    end
+    return table.concat(out)
+end
+
+local function encodeWords(values)
+    local out = {}
+    for i, value in ipairs(values) do out[i] = encodeWord(value) end
+    return table.concat(out)
+end
+
+local function encodeBytes(values)
+    local out = {}
+    local at = 1
+    for i, value in ipairs(values) do
+        local n = math.floor(value or 0)
+        local hi = math.floor(n / WIRE_BASE)
+        local lo = n % WIRE_BASE
+        out[at] = WIRE_ALPHABET:sub(hi + 1, hi + 1)
+        out[at + 1] = WIRE_ALPHABET:sub(lo + 1, lo + 1)
+        at = at + 2
+    end
     return table.concat(out)
 end
 
@@ -377,8 +416,14 @@ function R.emit(protos, constants, luaVersion, options)
             for i,value in ipairs(params) do digest=(digest*digestMul+value+i*digestIndexMix)%digestMod end
             for i,value in ipairs(captures) do digest=(digest*digestMul+value+i*digestKeyMix)%digestMod end
         end
-        local record={}; record[pStream]=array(stream); record[pKey]=key; record[pParams]=array(params); record[pCaptures]=array(captures)
-        record[pDigest]=(digest+key*digestMaskMul+mode*digestSaltMix)%digestMod; record[pMode]=mode; record[pCacheKey]=cacheKey
+        local record={}
+        record[pStream]=encodeWords(stream)
+        record[pKey]=encodeWord(key)
+        record[pParams]=encodeWords(params)
+        record[pCaptures]=encodeWords(captures)
+        record[pDigest]=encodeWord((digest+key*digestMaskMul+mode*digestSaltMix)%digestMod)
+        record[pMode]=mode
+        record[pCacheKey]=encodeWord(cacheKey)
         serialized[pid]=array(record)
     end
     local encrypted = {}
@@ -411,8 +456,11 @@ function R.emit(protos, constants, luaVersion, options)
         end
         local digest=(key+id*digestKeyMix+mode*digestSaltMix+#bytes*digestLenMix)%digestMod
         for i,cipher in ipairs(bytes) do digest=(digest*constDigestMul+cipher+i*constDigestIndexMix)%digestMod end
-        local record={}; record[cMode]=mode; record[cKey]=key; record[cBytes]=array(bytes)
-        record[cDigest]=(digest+key*constDigestMaskMul+mode*digestKeyMix)%digestMod
+        local record={}
+        record[cMode]=mode
+        record[cKey]=encodeWord(key)
+        record[cBytes]=encodeBytes(bytes)
+        record[cDigest]=encodeWord((digest+key*constDigestMaskMul+mode*digestKeyMix)%digestMod)
         encrypted[id]=array(record)
     end
     local emittedHandlers={}
@@ -474,6 +522,45 @@ return (function(env,...)
     local prototypes=PROTOTYPES
     local pool=CONSTANTS
     local unpackValues=unpack or table.unpack
+    local wireAlphabet=WIREALPHABET
+    local wireBase=WIREBASE
+    local wireWordWidth=WIREWORDWIDTH
+    local wireByteWidth=WIREBYTEWIDTH
+    local wireIndex={}
+    for i=1,#wireAlphabet do wireIndex[string.sub(wireAlphabet,i,i)]=i-1 end
+    local function readWord(blob,pos)
+        local a=wireIndex[string.sub(blob,pos,pos)]
+        local b=wireIndex[string.sub(blob,pos+1,pos+1)]
+        local c=wireIndex[string.sub(blob,pos+2,pos+2)]
+        local d=wireIndex[string.sub(blob,pos+3,pos+3)]
+        local e=wireIndex[string.sub(blob,pos+4,pos+4)]
+        return ((((a*wireBase+b)*wireBase+c)*wireBase+d)*wireBase+e)
+    end
+    local function readByte(blob,pos)
+        local a=wireIndex[string.sub(blob,pos,pos)]
+        local b=wireIndex[string.sub(blob,pos+1,pos+1)]
+        return a*wireBase+b
+    end
+    local function readWords(blob)
+        local values={}
+        for pos=1,#blob,wireWordWidth do values[#values+1]=readWord(blob,pos) end
+        return values
+    end
+    local protoMetaCache={}
+    local function protoMeta(pid,proto)
+        local cached=protoMetaCache[pid]
+        if cached then return cached end
+        cached={
+            key=readWord(proto[PKEY],1),
+            params=readWords(proto[PPARAMS]),
+            captures=readWords(proto[PCAPTURES]),
+            digest=readWord(proto[PDIGEST],1),
+            mode=proto[PMODE],
+            cacheKey=readWord(proto[PCACHEKEY],1),
+        }
+        protoMetaCache[pid]=cached
+        return cached
+    end
     local function pack(...) return {n=select('#',...),...} end
     local createArray=table and table.create
     local nilSentinel={}
@@ -484,27 +571,29 @@ return (function(env,...)
         if INTEGRITYSTEP<=0 then return true end
         if VERIFYONCE and verifiedProtoCache[pid] then return true end
         local stream=proto[PSTREAM]
-        local key=proto[PKEY]
-        local hash=(#stream*DIGESTLENMIX+key*DIGESTKEYMIX+SALT*DIGESTSALTMIX+STRIDE)%DIGESTMOD
-        if #stream>0 then
+        local meta=protoMeta(pid,proto)
+        local key=meta.key
+        local wordCount=#stream/wireWordWidth
+        local hash=(wordCount*DIGESTLENMIX+key*DIGESTKEYMIX+SALT*DIGESTSALTMIX+STRIDE)%DIGESTMOD
+        if wordCount>0 then
             local offset=((key+SALT)%INTEGRITYSTEP)+1
-            for i=offset,#stream,INTEGRITYSTEP do
-                hash=(hash*DIGESTMUL+stream[i]+i*DIGESTINDEXMIX)%DIGESTMOD
+            for i=offset,wordCount,INTEGRITYSTEP do
+                hash=(hash*DIGESTMUL+readWord(stream,(i-1)*wireWordWidth+1)+i*DIGESTINDEXMIX)%DIGESTMOD
             end
-            if ((#stream-offset)%INTEGRITYSTEP)~=0 then
-                hash=(hash*DIGESTMUL+stream[#stream]+#stream*DIGESTINDEXMIX)%DIGESTMOD
+            if ((wordCount-offset)%INTEGRITYSTEP)~=0 then
+                hash=(hash*DIGESTMUL+readWord(stream,(wordCount-1)*wireWordWidth+1)+wordCount*DIGESTINDEXMIX)%DIGESTMOD
             end
         end
-        local mode=proto[PMODE]
-        local cacheKey=proto[PCACHEKEY]
-        local params=proto[PPARAMS]
-        local captures=proto[PCAPTURES]
+        local mode=meta.mode
+        local cacheKey=meta.cacheKey
+        local params=meta.params
+        local captures=meta.captures
         hash=(hash*DIGESTMUL+mode*DIGESTSALTMIX+cacheKey*DIGESTKEYMIX+pid)%DIGESTMOD
         hash=(hash*DIGESTMUL+#params*DIGESTLENMIX+#captures*DIGESTSALTMIX)%DIGESTMOD
         for i,value in ipairs(params) do hash=(hash*DIGESTMUL+value+i*DIGESTINDEXMIX)%DIGESTMOD end
         for i,value in ipairs(captures) do hash=(hash*DIGESTMUL+value+i*DIGESTKEYMIX)%DIGESTMOD end
         local sealed=(hash+key*DIGESTMASKMUL+mode*DIGESTSALTMIX)%DIGESTMOD
-        if sealed~=proto[PDIGEST] then error(ERRORBYTECODE,0) end
+        if sealed~=meta.digest then error(ERRORBYTECODE,0) end
         if VERIFYONCE then verifiedProtoCache[pid]=true end
         return true
     end
@@ -518,39 +607,40 @@ return (function(env,...)
                 return cached
             end
         end
-        local entry=pool[id]; local mode=entry[CMODE]; local key=entry[CKEY]; local bytes=entry[CBYTES]
+        local entry=pool[id]; local mode=entry[CMODE]; local key=readWord(entry[CKEY],1); local bytes=entry[CBYTES]
+        local byteCount=#bytes/wireByteWidth
         local chars={}; local tag; local state
-        local hash=(key+id*DIGESTKEYMIX+mode*DIGESTSALTMIX+#bytes*DIGESTLENMIX)%DIGESTMOD
+        local hash=(key+id*DIGESTKEYMIX+mode*DIGESTSALTMIX+byteCount*DIGESTLENMIX)%DIGESTMOD
         if mode==1 then
             state=(key+id*CONSTSTRIDE+CONSTSALT)%CONSTMOD
-            for i=1,#bytes do
+            for i=1,byteCount do
                 state=(state*CONSTMUL1+i*CONSTADD1)%CONSTMOD
-                local cipher=bytes[i]; local value=(cipher-state%256)%256
+                local cipher=readByte(bytes,(i-1)*wireByteWidth+1); local value=(cipher-state%256)%256
                 state=(state+cipher)%CONSTMOD
                 hash=(hash*CONSTDIGESTMUL+cipher+i*CONSTDIGESTINDEXMIX)%DIGESTMOD
                 if i==1 then tag=value else chars[i-1]=string.char(value) end
             end
         elseif mode==2 then
             state=(key*3+id*CONSTSTRIDE+CONSTSALT)%CONSTMOD
-            for i=1,#bytes do
+            for i=1,byteCount do
                 state=(state*CONSTMUL2+i*CONSTADD2+id)%CONSTMOD
-                local cipher=bytes[i]; local value=(cipher-(state+i)%256)%256
+                local cipher=readByte(bytes,(i-1)*wireByteWidth+1); local value=(cipher-(state+i)%256)%256
                 state=(state+cipher*3+i)%CONSTMOD
                 hash=(hash*CONSTDIGESTMUL+cipher+i*CONSTDIGESTINDEXMIX)%DIGESTMOD
                 if i==1 then tag=value else chars[i-1]=string.char(value) end
             end
         else
             state=(key+id*CONSTSTRIDE*3+CONSTSALT)%CONSTMOD
-            for i=1,#bytes do
+            for i=1,byteCount do
                 state=(state*CONSTMUL3+i*CONSTADD3+key)%CONSTMOD
-                local cipher=bytes[i]; local value=(cipher-(state+key)%256)%256
+                local cipher=readByte(bytes,(i-1)*wireByteWidth+1); local value=(cipher-(state+key)%256)%256
                 state=(state+cipher+i*7)%CONSTMOD
                 hash=(hash*CONSTDIGESTMUL+cipher+i*CONSTDIGESTINDEXMIX)%DIGESTMOD
                 if i==1 then tag=value else chars[i-1]=string.char(value) end
             end
         end
         local sealed=(hash+key*CONSTDIGESTMASKMUL+mode*DIGESTKEYMIX)%DIGESTMOD
-        if sealed~=entry[CDIGEST] then error(ERRORCONSTANT,0) end
+        if sealed~=readWord(entry[CDIGEST],1) then error(ERRORCONSTANT,0) end
         local raw=table.concat(chars)
         for i=1,#chars do chars[i]=nil end
         local value
@@ -656,9 +746,12 @@ return (function(env,...)
         local localConstantCache=frameConstantCacheEnabled and {{},{}} or nil
         local proto=prototypes[id]; verifyProto(id,proto)
         local stream=proto[PSTREAM]
-        local protoKey=proto[PKEY]
-        local decodeMode=proto[PMODE]
-        local cacheKey=proto[PCACHEKEY]
+        local meta=protoMeta(id,proto)
+        local protoKey=meta.key
+        local decodeMode=meta.mode
+        local cacheKey=meta.cacheKey
+        local params=meta.params
+        local captures=meta.captures
         local decodedCache=nil
         -- The entry prototype normally runs once; retaining its decoded form
         -- only helps dumpers and consumes memory. Repeated child callbacks keep
@@ -668,9 +761,9 @@ return (function(env,...)
             if not decodedCache then decodedCache={}; decodedProtoCache[id]=decodedCache end
         end
         local cells={}; for slot,cell in pairs(captured) do cells[slot]=cell end
-        for i,slot in ipairs(proto[PPARAMS]) do cells[slot]={args[i]} end
-        local varargs={n=math.max(0,args.n-#proto[PPARAMS])}
-        for i=1,varargs.n do varargs[i]=args[i+#proto[PPARAMS]] end
+        for i,slot in ipairs(params) do cells[slot]={args[i]} end
+        local varargs={n=math.max(0,args.n-#params)}
+        for i=1,varargs.n do varargs[i]=args[i+#params] end
         args=nil
         local frame={
             FCELLS=cells,FVARARGS=varargs,FSTACK={},FPACKETS={},FTOP=STACKADD,
@@ -682,7 +775,7 @@ return (function(env,...)
         while frame.status==LIVE do
             BUDGETSTEP
             local index=(frame.position-frame.drift-PCADD)/PCMUL
-            local offset=(index-1)*4
+            local offset=(index-1)*wireWordWidth
             local cacheBase=index*4
             local opcode,a,b,c
             if decodedCache then
@@ -698,22 +791,22 @@ return (function(env,...)
                 local key,cipher
                 if decodeMode==1 then
                     key=(protoKey+index*STRIDE+SALT)%CIPHERMOD
-                    key=(key*CIPHERMUL1+IADD11)%CIPHERMOD; cipher=stream[offset+1]; opcode=(cipher-key)%CIPHERMOD; key=(key+cipher)%CIPHERMOD
-                    key=(key*CIPHERMUL1+IADD12)%CIPHERMOD; cipher=stream[offset+2]; a=(cipher-key)%CIPHERMOD; key=(key+cipher)%CIPHERMOD
-                    key=(key*CIPHERMUL1+IADD13)%CIPHERMOD; cipher=stream[offset+3]; b=(cipher-key)%CIPHERMOD; key=(key+cipher)%CIPHERMOD
-                    key=(key*CIPHERMUL1+IADD14)%CIPHERMOD; cipher=stream[offset+4]; c=(cipher-key)%CIPHERMOD
+                    key=(key*CIPHERMUL1+IADD11)%CIPHERMOD; cipher=readWord(stream,offset+1); opcode=(cipher-key)%CIPHERMOD; key=(key+cipher)%CIPHERMOD
+                    key=(key*CIPHERMUL1+IADD12)%CIPHERMOD; cipher=readWord(stream,offset+6); a=(cipher-key)%CIPHERMOD; key=(key+cipher)%CIPHERMOD
+                    key=(key*CIPHERMUL1+IADD13)%CIPHERMOD; cipher=readWord(stream,offset+11); b=(cipher-key)%CIPHERMOD; key=(key+cipher)%CIPHERMOD
+                    key=(key*CIPHERMUL1+IADD14)%CIPHERMOD; cipher=readWord(stream,offset+16); c=(cipher-key)%CIPHERMOD
                 elseif decodeMode==2 then
                     key=(protoKey*3+index*STRIDE+SALT)%CIPHERMOD
-                    key=(key*CIPHERMUL2+IADD21+index)%CIPHERMOD; cipher=stream[offset+1]; opcode=(cipher-key-protoKey)%CIPHERMOD; key=(key+cipher*3+1)%CIPHERMOD
-                    key=(key*CIPHERMUL2+IADD22+index)%CIPHERMOD; cipher=stream[offset+2]; a=(cipher-key-2*protoKey)%CIPHERMOD; key=(key+cipher*3+2)%CIPHERMOD
-                    key=(key*CIPHERMUL2+IADD23+index)%CIPHERMOD; cipher=stream[offset+3]; b=(cipher-key-3*protoKey)%CIPHERMOD; key=(key+cipher*3+3)%CIPHERMOD
-                    key=(key*CIPHERMUL2+IADD24+index)%CIPHERMOD; cipher=stream[offset+4]; c=(cipher-key-4*protoKey)%CIPHERMOD
+                    key=(key*CIPHERMUL2+IADD21+index)%CIPHERMOD; cipher=readWord(stream,offset+1); opcode=(cipher-key-protoKey)%CIPHERMOD; key=(key+cipher*3+1)%CIPHERMOD
+                    key=(key*CIPHERMUL2+IADD22+index)%CIPHERMOD; cipher=readWord(stream,offset+6); a=(cipher-key-2*protoKey)%CIPHERMOD; key=(key+cipher*3+2)%CIPHERMOD
+                    key=(key*CIPHERMUL2+IADD23+index)%CIPHERMOD; cipher=readWord(stream,offset+11); b=(cipher-key-3*protoKey)%CIPHERMOD; key=(key+cipher*3+3)%CIPHERMOD
+                    key=(key*CIPHERMUL2+IADD24+index)%CIPHERMOD; cipher=readWord(stream,offset+16); c=(cipher-key-4*protoKey)%CIPHERMOD
                 else
                     key=(protoKey+index*STRIDE*3+SALT)%CIPHERMOD
-                    key=(key*CIPHERMUL3+IADD31+protoKey)%CIPHERMOD; cipher=stream[offset+1]; opcode=(cipher-key-index)%CIPHERMOD; key=(key+cipher+7)%CIPHERMOD
-                    key=(key*CIPHERMUL3+IADD32+protoKey)%CIPHERMOD; cipher=stream[offset+2]; a=(cipher-key-index*2)%CIPHERMOD; key=(key+cipher+14)%CIPHERMOD
-                    key=(key*CIPHERMUL3+IADD33+protoKey)%CIPHERMOD; cipher=stream[offset+3]; b=(cipher-key-index*3)%CIPHERMOD; key=(key+cipher+21)%CIPHERMOD
-                    key=(key*CIPHERMUL3+IADD34+protoKey)%CIPHERMOD; cipher=stream[offset+4]; c=(cipher-key-index*4)%CIPHERMOD
+                    key=(key*CIPHERMUL3+IADD31+protoKey)%CIPHERMOD; cipher=readWord(stream,offset+1); opcode=(cipher-key-index)%CIPHERMOD; key=(key+cipher+7)%CIPHERMOD
+                    key=(key*CIPHERMUL3+IADD32+protoKey)%CIPHERMOD; cipher=readWord(stream,offset+6); a=(cipher-key-index*2)%CIPHERMOD; key=(key+cipher+14)%CIPHERMOD
+                    key=(key*CIPHERMUL3+IADD33+protoKey)%CIPHERMOD; cipher=readWord(stream,offset+11); b=(cipher-key-index*3)%CIPHERMOD; key=(key+cipher+21)%CIPHERMOD
+                    key=(key*CIPHERMUL3+IADD34+protoKey)%CIPHERMOD; cipher=readWord(stream,offset+16); c=(cipher-key-index*4)%CIPHERMOD
                 end
                 if decodedCache then
                     decodedCache[cacheBase-3]=opcode+cacheKey
@@ -722,7 +815,7 @@ return (function(env,...)
                     decodedCache[cacheBase]=c+CACHEMASKC
                 end
             end
-            frame.drift=(frame.drift+stream[offset+1])%DRIFTMOD
+            frame.drift=(frame.drift+readWord(stream,offset+1))%DRIFTMOD
             frame.position=(index+1)*PCMUL+PCADD+frame.drift
             local handler=dispatch[opcode]
             if not handler then error(ERRORINSTRUCTION,0) end
@@ -797,6 +890,7 @@ end)(getfenv and getfenv() or _ENV or _G,...)
         ERRORCONSTANT=string.format("%q",tostring(rand())..tostring(rand())),
         ERRORDISPATCH=string.format("%q",tostring(rand())..tostring(rand())),
         ERRORINSTRUCTION=string.format("%q",tostring(rand())..tostring(rand())),
+        WIREALPHABET=string.format("%q",WIRE_ALPHABET),WIREBASE=WIRE_BASE,WIREWORDWIDTH=WIRE_WORD_WIDTH,WIREBYTEWIDTH=WIRE_BYTE_WIDTH,
         FCELLS=frameAliases.cells,FVARARGS=frameAliases.varargs,FSTACK=frameAliases.stack,
         FPACKETS=frameAliases.packets,FTOP=frameAliases.top,FDRIFT=frameAliases.drift,
         FSTATUS=frameAliases.status,FNOISE=frameAliases.noise,FCONSTANTCACHE=frameAliases.constantCache}
