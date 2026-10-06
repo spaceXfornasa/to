@@ -57,7 +57,7 @@ const ALLOWED_ROLES = process.env.DISCORD_ALLOWED_ROLE_ID
 
 const obfuscateCommand = new SlashCommandBuilder()
   .setName("obf")
-  .setDescription("Obfuscate Lua/LuaU code using ByteCode")
+  .setDescription("Obfuscate Lua/LuaU code using Stealth-X")
   .addAttachmentOption((opt) =>
     opt
       .setName("file")
@@ -108,6 +108,12 @@ const obfuscateCommand = new SlashCommandBuilder()
   );
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** Generate a random "stealthx-<16 digits>.lua" filename for each obfuscated output. */
+function randomOutputFilename(): string {
+  const part = () => Math.floor(Math.random() * 1e8).toString().padStart(8, "0");
+  return `stealthx-${part()}${part()}.lua`;
+}
 
 const obfQueue: Array<{
   job: () => Promise<unknown>;
@@ -364,11 +370,11 @@ export async function handleObfuscation(client: Client, interaction: ChatInputCo
             { name: "Size Ratio", value: `${ratio}%`, inline: true },
             { name: "Output", value: `${(output.length / 1000).toFixed(1)} KB`, inline: true },
           )
-          .setFooter({ text: "Stealth-X ByteCode Obfuscator" });
+          .setFooter({ text: "Stealth-X Obfuscator" });
 
         return interaction.editReply({
           embeds: [embed],
-          files: [{ attachment: outputBuffer, name: "bytecode.lua" }],
+          files: [{ attachment: outputBuffer, name: randomOutputFilename() }],
         });
       } catch (error) {
         console.error("Obfuscation job error:", error);
