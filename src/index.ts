@@ -24,6 +24,14 @@ import { sanitizeLanguageContamination } from "./language";
 import { loadAttachment, type DiscordAttachment } from "./files";
 import { convertMarkdownTables, extractCodeFiles, splitDiscordMessage, type CodeFile } from "./text";
 import { getObfuscateCommand, handleObfuscation } from "./obfuscator";
+import {
+  getDownloadCommand,
+  getPingCommand,
+  handleDownloadCommand,
+  handlePingCommand,
+  handleScraperButton,
+  handleScraperMessage,
+} from "./scraper";
 import { TavilySearchManager } from "./search";
 
 const DISCORD_USER_AGENT = "StealthAI Discord Bot/1.0";
@@ -239,6 +247,8 @@ function currentDateKey(timeZone: string): string {
 function buildSlashCommands(): (SlashCommandBuilder | SlashCommandOptionsOnlyBuilder)[] {
   return [
     getObfuscateCommand(),
+    getDownloadCommand(),
+    getPingCommand(),
     new SlashCommandBuilder()
       .setName("ask")
       .setDescription("Ask the AI a question")
@@ -490,6 +500,12 @@ class StealthBot {
         void this.handleAutocomplete(interaction).catch(() => {});
         return;
       }
+      if (interaction.isButton()) {
+        void handleScraperButton(interaction).catch((error) => {
+          console.error("Button handler failed:", error);
+        });
+        return;
+      }
       if (!interaction.isChatInputCommand()) return;
       void this.handleSlashCommand(interaction).catch((error) => {
         console.error("Slash handler failed:", error);
@@ -656,6 +672,7 @@ class StealthBot {
       prompt = content;
       source = "channel";
     } else {
+      await handleScraperMessage(message);
       return;
     }
 
@@ -823,7 +840,7 @@ class StealthBot {
       "Commands:",
       `• \`${p}hi\``,
       `• \`${p}reset\``,
-      "Slash: `/ask`, `/chat`, `/obf`, `/help`",
+      "Slash: `/ask`, `/chat`, `/obf`, `/download`, `/ping`, `/help`",
     ];
     if (admin) {
       lines.push(
@@ -1006,6 +1023,14 @@ class StealthBot {
     const command = interaction.commandName;
     if (command === "obf") {
       await handleObfuscation(this.client, interaction);
+      return;
+    }
+    if (command === "download") {
+      await handleDownloadCommand(interaction);
+      return;
+    }
+    if (command === "ping") {
+      await handlePingCommand(interaction);
       return;
     }
     const user = interaction.user;
@@ -1625,6 +1650,8 @@ class StealthBot {
       `\`${p}hi\` / \`/hi\` — check that the bot is responding`,
       `\`${p}reset\` / \`/reset\` — clear your chat memory in this channel`,
       "`/obf` — obfuscate Lua/LuaU code",
+      "`/download url:` — download media from TikTok, YouTube, Instagram, Spotify, etc.",
+      "`/ping` — check bot latency",
     ];
     if (admin) {
       lines.push(
