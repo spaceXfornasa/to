@@ -93,7 +93,7 @@ return {
 
 	-- V2 Standard: balanced protection and runtime cost.
 	-- Adds light anti-dump trace poison and periodic runtime sanity checks.
-	["V2Standard"] = {
+	["Standard"] = {
 		LuaVersion = "LuaU",
 		VarNamePrefix = "",
 		NameGenerator = "MangledShuffled",
@@ -129,7 +129,7 @@ return {
 	-- V2 Maximum: strongest of the three profiles, intentionally heavier at runtime.
 	-- All expensive transforms remain ahead of the final VM so the resulting artifact
 	-- still has one execution VM rather than nesting multiple VMs.
-	["V2Maximum"] = {
+	["Maximum"] = {
 		LuaVersion = "LuaU",
 		VarNamePrefix = "",
 		NameGenerator = "MangledShuffled",
@@ -185,8 +185,43 @@ return {
 		},
 	},
 
-	-- Strong obfuscation, high performance loss.
+	-- Strong: higher protection than Standard without nested VMs or debug-dependent tamper checks.
+	-- One VM only; intended as the normal "Strong" production profile.
 	["Strong"] = {
+		LuaVersion = "LuaU",
+		VarNamePrefix = "",
+		NameGenerator = "MangledShuffled",
+		PrettyPrint = false,
+		NumberFormat = "MixedHex",
+		Seed = 0,
+		Steps = {
+			{
+				Name = "AntiDump",
+				Settings = { Enabled = true, EnvNoise = 24, SpawnPoison = false },
+			},
+			{Name = "EncryptStrings", Settings = {}},
+			{
+				Name = "SplitStrings",
+				Settings = {
+					Threshold = 0.6, MinLength = 5, MaxLength = 10,
+					ConcatenationType = "custom", CustomFunctionType = "global",
+				},
+			},
+			{Name = "NumbersToExpressions", Settings = { NumberRepresentationMutation = true }},
+			{Name = "AntiTamper", Settings = { UseDebug = false }},
+			{
+				Name = "Vmify",
+				Settings = {
+					YieldEvery = 0, NoiseRate = 48, FrameConstantCache = true, ConstantCacheSlots = 48,
+					IntegrityStep = 1, InstructionCache = true, VerifyOnce = true,
+					TraceGuardEvery = 128, HandlerWrapperNoise = true,
+				},
+			},
+		},
+	},
+
+	-- Legacy Strong retained for backwards compatibility only. Do not expose in the UI.
+	["LegacyStrong"] = {
 		LuaVersion = "Lua51",
 		VarNamePrefix = "",
 		NameGenerator = "MangledShuffled",
@@ -195,29 +230,10 @@ return {
 		Steps = {
 			{ Name = "Vmify", Settings = {} },
 			{ Name = "EncryptStrings", Settings = {} },
-			{
-				Name = "AntiTamper",
-				Settings = {
-					UseDebug = true,
-				},
-			},
+			{ Name = "AntiTamper", Settings = { UseDebug = true } },
 			{ Name = "Vmify", Settings = {} },
-			{
-				Name = "ConstantArray",
-				Settings = {
-					Threshold = 1,
-					StringsOnly = true,
-					Shuffle = true,
-					Rotate = true,
-					LocalWrapperThreshold = 0
-				},
-			},
-			{
-				Name = "NumbersToExpressions",
-				Settings = {
-					NumberRepresentationMutation = true
-				},
-			},
+			{ Name = "ConstantArray", Settings = { Threshold = 1, StringsOnly = true, Shuffle = true, Rotate = true, LocalWrapperThreshold = 0 } },
+			{ Name = "NumbersToExpressions", Settings = { NumberRepresentationMutation = true } },
 			{ Name = "SplitStrings", Settings = {} },
 			{ Name = "WrapInFunction", Settings = {} },
 		},

@@ -2,7 +2,7 @@
 
 The V2 presets are designed around one final VM per output. Expensive compiler-side work is performed before output generation and is not shipped as runtime validators.
 
-## V2Lite
+## Legacy/internal V2Lite
 
 Goal: lowest runtime overhead.
 
@@ -16,7 +16,7 @@ Goal: lowest runtime overhead.
 
 Recommended default when execution performance matters.
 
-## V2Standard
+## Standard
 
 Goal: balanced protection and runtime cost.
 
@@ -28,7 +28,20 @@ Goal: balanced protection and runtime cost.
 
 Recommended general-purpose profile.
 
-## V2Maximum
+## Strong
+
+Goal: stronger than Standard without the old nested-VM pipeline.
+
+- One Vmify pass only.
+- Light AntiDump.
+- EncryptStrings + SplitStrings.
+- NumbersToExpressions.
+- AntiTamper without debug-dependent checks.
+- Dense integrity sampling, trace guards, and handler wrapper noise.
+- Intended for users who want more resistance while avoiding the old Strong/Extreme build cost.
+
+
+## Maximum
 
 Goal: strongest of the three profiles, with intentionally higher runtime cost.
 
