@@ -247,7 +247,7 @@ function R.emit(protos, constants, luaVersion, options)
         },
         TAILSELF = {[=[local args=popPacket(); local obj=popOne(); tailFunction=popOne(); tailArgs={n=args.n+1,obj}; for i=1,args.n do tailArgs[i+1]=args[i] end; status=TAIL]=]},
         CLOSURE = {[=[local child=prototypes[a]; local captured={}
-            for _,slot in ipairs(child[PCAPTURES]) do captured[slot]=cells[slot] end
+            for _,slot in ipairs(protoMeta(a,child).captures) do captured[slot]=cells[slot] end
             pushOne(function(...) return run(a,captured,pack(...)) end)]=]},
         TABLE = {
             "pushOne({})",
@@ -486,6 +486,10 @@ function R.emit(protos, constants, luaVersion, options)
                     else decoded[#decoded+1]="local "..name0.."0="..name0.."-"..masks[index]..";"..name0.."="..name0.."0" end
                 end
             end
+            for _,argIndex in ipairs(slotArgs[name] or {}) do
+                local name0=({"a","b","c"})[argIndex]
+                decoded[#decoded+1]=name0.."=("..name0.."-"..regAdd..")/"..regMul
+            end
             if #decoded>0 then body=table.concat(decoded,";")..";"..body end
             if handlerWrapperNoise then
                 local wrapperStyle=math.random(1,4)
@@ -553,10 +557,18 @@ return (function(env,...)
     local function protoMeta(pid,proto)
         local cached=protoMetaCache[pid]
         if cached then return cached end
+        local rawParams=readWords(proto[PPARAMS])
+        local rawCaptures=readWords(proto[PCAPTURES])
+        local params={}
+        local captures={}
+        for i,value in ipairs(rawParams) do params[i]=(value-REGADD)/REGMUL end
+        for i,value in ipairs(rawCaptures) do captures[i]=(value-REGADD)/REGMUL end
         cached={
             key=readWord(proto[PKEY],1),
-            params=readWords(proto[PPARAMS]),
-            captures=readWords(proto[PCAPTURES]),
+            rawParams=rawParams,
+            rawCaptures=rawCaptures,
+            params=params,
+            captures=captures,
             digest=readWord(proto[PDIGEST],1),
             mode=proto[PMODE],
             cacheKey=readWord(proto[PCACHEKEY],1),
@@ -589,8 +601,8 @@ return (function(env,...)
         end
         local mode=meta.mode
         local cacheKey=meta.cacheKey
-        local params=meta.params
-        local captures=meta.captures
+        local params=meta.rawParams
+        local captures=meta.rawCaptures
         hash=(hash*DIGESTMUL+mode*DIGESTSALTMIX+cacheKey*DIGESTKEYMIX+pid)%DIGESTMOD
         hash=(hash*DIGESTMUL+#params*DIGESTLENMIX+#captures*DIGESTSALTMIX)%DIGESTMOD
         for i,value in ipairs(params) do hash=(hash*DIGESTMUL+value+i*DIGESTINDEXMIX)%DIGESTMOD end
@@ -778,7 +790,7 @@ return (function(env,...)
         while frame.status==LIVE do
             BUDGETSTEP
             local index=(frame.position-frame.drift-PCADD)/PCMUL
-            local offset=(index-1)*wireWordWidth
+            local offset=(index-1)*wireWordWidth*4
             local cacheBase=index*4
             local opcode,a,b,c
             if decodedCache then
@@ -869,7 +881,7 @@ end)(getfenv and getfenv() or _ENV or _G,...)
             (yieldInterval<=0 and "safeYield();" or "if clockFunc then local now=clockFunc();if now-lastYieldAt>="..yieldInterval.." then lastYieldAt=now;safeYield() end else safeYield() end;").."end;"
     end
     local replacements={PROTOTYPES=array(serialized),CONSTANTS=array(encrypted),STRIDE=stride,SALT=salt,
-        PCMUL=pcMul,PCADD=pcAdd,STACKMUL=stackMul,STACKADD=stackAdd,LIVE=stateLive,DONE=stateDone,TAIL=stateTail,
+        REGMUL=regMul,REGADD=regAdd,PCMUL=pcMul,PCADD=pcAdd,STACKMUL=stackMul,STACKADD=stackAdd,LIVE=stateLive,DONE=stateDone,TAIL=stateTail,
         YIELDEVERY=yieldEvery,YIELDINTERVAL=yieldInterval,FRAMECONSTANTCACHE=tostring(frameConstantCache),
         INTEGRITYSTEP=integrityStep,VERIFYONCE=tostring(verifyOnce),INSTRUCTIONCACHE=tostring(instructionCache),
         TRACEGUARDEVERY=traceGuardEvery,GUARDSALT=guardSalt,HANDLERS=table.concat(emittedHandlers,"\n"),
