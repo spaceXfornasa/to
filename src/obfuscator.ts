@@ -73,14 +73,14 @@ const obfuscateCommand = new SlashCommandBuilder()
   .addStringOption((opt) =>
     opt
       .setName("preset")
-      .setDescription("Obfuscation preset (default: Medium)")
+      .setDescription("Obfuscation preset (default: Standard)")
       .setRequired(false)
       .addChoices(
         { name: "Minify", value: "Minify" },
         { name: "Weak", value: "Weak" },
-        { name: "Medium", value: "Medium" },
+        { name: "Standard (Roblox)", value: "Standard" },
         { name: "Strong", value: "Strong" },
-        { name: "Extreme", value: "Extreme" },
+        { name: "Maximum", value: "Maximum" },
       ),
   )
   .addStringOption((opt) =>
@@ -204,8 +204,16 @@ export async function handleObfuscation(client: Client, interaction: ChatInputCo
 
   const attachment = interaction.options.getAttachment("file");
   const rawCode = interaction.options.getString("code");
-  const requestedPreset = interaction.options.getString("preset") ?? "Medium";
-  const preset = requestedPreset === "Roblox" ? "Medium" : requestedPreset;
+  const requestedPreset = interaction.options.getString("preset") ?? "Standard";
+  const presetAliases: Record<string, string> = {
+    Roblox: "Standard",
+    Medium: "Standard",
+    V2Lite: "Standard",
+    V2Standard: "Standard",
+    V2Maximum: "Maximum",
+    Extreme: "Maximum",
+  };
+  const preset = presetAliases[requestedPreset] || requestedPreset;
   const luaVersion = interaction.options.getString("lua_version") ?? "LuaU";
   const prettyPrint = interaction.options.getBoolean("pretty_print") ?? false;
   const seed = interaction.options.getInteger("seed") ?? Math.floor(Math.random() * 2_147_483_646) + 1;

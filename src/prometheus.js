@@ -7,7 +7,7 @@ const { randomInt } = require("crypto");
 // --- Resolve paths -----------------------------------------------------------
 const srcRoot = path.resolve(__dirname, "../Prometheus");
 
-const PRESETS = Object.freeze(["Minify", "Weak", "Medium", "Strong", "Extreme"]);
+const PRESETS = Object.freeze(["Minify", "Weak", "Standard", "Strong", "Maximum"]);
 const LUA_VERSIONS = Object.freeze(["Lua51", "LuaU"]);
 
 // --- Lua file discovery ------------------------------------------------------
@@ -215,7 +215,7 @@ async function runPrometheus(options = {}) {
   try {
     options = {
       ...options,
-      preset: !options.preset || options.preset === "Roblox" ? "Medium" : options.preset,
+      preset: ({ Roblox: "Standard", Medium: "Standard", V2Lite: "Standard", V2Standard: "Standard", V2Maximum: "Maximum", Extreme: "Maximum" }[options.preset]) || options.preset || "Standard",
       luaVersion: options.luaVersion ?? "LuaU",
       filename: options.filename ?? "input.lua",
       seed: options.seed ?? randomInt(1, 2147483647),
