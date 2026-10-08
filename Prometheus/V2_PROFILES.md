@@ -18,15 +18,15 @@ Recommended default when execution performance matters.
 
 ## Standard
 
-Goal: balanced protection and runtime cost.
+Goal: low runtime overhead for Roblox, especially on low-end devices.
 
-- Everything in V2Lite, with denser integrity sampling
+- Everything in V2Lite, with the same sparse integrity approach tuned for Standard
 - Lightweight anti-dump environment noise
-- Periodic executor-safe trace sanity checks
-- Polymorphic handler wrapper noise
+- No periodic runtime trace guard by default
+- No per-handler wrapper branches
 - Still uses one final VM
 
-Recommended general-purpose profile.
+Recommended general-purpose profile, especially for low-end Roblox devices.
 
 ## Strong
 
@@ -37,7 +37,8 @@ Goal: stronger than Standard without the old nested-VM pipeline.
 - EncryptStrings + SplitStrings.
 - NumbersToExpressions.
 - AntiTamper without debug-dependent checks.
-- Dense integrity sampling, trace guards, and handler wrapper noise.
+- Moderate integrity sampling and infrequent trace guards.
+- No per-handler wrapper branches to keep Roblox runtime cost predictable.
 - Intended for users who want more resistance while avoiding the old Strong/Extreme build cost.
 
 
@@ -45,18 +46,18 @@ Goal: stronger than Standard without the old nested-VM pipeline.
 
 Goal: strongest of the three profiles, with intentionally higher runtime cost.
 
-- Anti-dump trace poison with background decoy jobs
+- Anti-dump environment noise without background decoy jobs
 - Additional string encryption before the final VM
 - String splitting
 - Number-expression mutation
 - Anti-tamper sanity checks
-- Full integrity verification
-- More frequent trace guards
-- Higher VM noise
+- Moderate integrity verification
+- Infrequent trace guards
+- Moderate VM noise
 - Larger constant cache
-- Polymorphic handler wrappers
+- Polymorphic VM layout and opcode mapping
 
-Use this only when protection matters more than execution overhead.
+Use this when stronger protection matters more than the lowest possible runtime overhead.
 
 ## Important: session-bound material
 
@@ -64,4 +65,13 @@ The current project does not have a server/session secret contract, so these pre
 
 ## Build-time vs runtime
 
-The compiler can perform validation and randomization without adding that work to the emitted client. The runtime cost mainly comes from the VM itself, constant decryption, integrity checks, anti-dump jobs, and trace guards.
+The compiler can perform validation and randomization without adding that work to the emitted client. The runtime cost mainly comes from the VM itself, constant decryption, integrity checks, and any enabled trace/anti-dump work.
+
+## Runtime performance changes
+
+- The VM wire decoder uses allocation-free `string.byte` reads instead of creating temporary one-character strings for every encoded word.
+- The interpreter reuses the first decoded ciphertext word for drift bookkeeping instead of decoding it twice.
+- Standard, Strong, and Maximum disable per-handler wrapper branches.
+- Standard and Strong use sparser executable noise and less frequent integrity/trace work.
+- Maximum no longer launches periodic anti-dump background jobs, avoiding scheduled frame-time spikes.
+- Frame constant caching remains enabled.

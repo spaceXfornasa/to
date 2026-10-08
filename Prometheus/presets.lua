@@ -60,7 +60,7 @@ return {
 		NumberFormat = "MixedHex",
 		Seed = 0,
 		Steps = {
-			{ Name = "Vmify", Settings = { YieldEvery = 0, YieldInterval = 0.035, NoiseRate = 96, FrameConstantCache = true, ConstantCacheSlots = 32, InstructionCache = true, IntegrityStep = 1, VerifyOnce = true, TraceGuardEvery = 0, HandlerWrapperNoise = false } },
+			{ Name = "Vmify", Settings = { YieldEvery = 0, YieldInterval = 0.035, NoiseRate = 96, FrameConstantCache = true, ConstantCacheSlots = 32, InstructionCache = true, IntegrityStep = 4, VerifyOnce = true, TraceGuardEvery = 0, HandlerWrapperNoise = false } },
 		},
 	},
 
@@ -91,9 +91,44 @@ return {
 		},
 	},
 
-	-- V2 Standard: balanced protection and runtime cost.
-	-- Adds light anti-dump trace poison and periodic runtime sanity checks.
+	-- V2 Standard: low runtime overhead for Roblox, especially on low-end devices.
+	-- Uses the VM and light startup hardening without recurring hot-path guards.
 	["Standard"] = {
+		LuaVersion = "LuaU",
+		VarNamePrefix = "",
+		NameGenerator = "MangledShuffled",
+		PrettyPrint = false,
+		NumberFormat = "MixedHex",
+		Seed = 0,
+		Steps = {
+			{
+				Name = "AntiDump",
+				Settings = {
+					Enabled = true,
+					EnvNoise = 8,
+					SpawnPoison = false,
+				},
+			},
+			{
+				Name = "Vmify",
+				Settings = {
+					YieldEvery = 0,
+					NoiseRate = 256,
+					FrameConstantCache = true,
+					ConstantCacheSlots = 32,
+					IntegrityStep = 8,
+					InstructionCache = true,
+					VerifyOnce = true,
+					TraceGuardEvery = 0,
+					HandlerWrapperNoise = false,
+				},
+			},
+		},
+	},
+
+	-- V2 Maximum: strongest of the three profiles, but avoids recurring background jobs
+	-- and per-handler wrapper cost so protection does not create periodic frame spikes.
+	["Maximum"] = {
 		LuaVersion = "LuaU",
 		VarNamePrefix = "",
 		NameGenerator = "MangledShuffled",
@@ -107,42 +142,6 @@ return {
 					Enabled = true,
 					EnvNoise = 16,
 					SpawnPoison = false,
-				},
-			},
-			{
-				Name = "Vmify",
-				Settings = {
-					YieldEvery = 0,
-					NoiseRate = 72,
-					FrameConstantCache = true,
-					ConstantCacheSlots = 32,
-					IntegrityStep = 2,
-					InstructionCache = true,
-					VerifyOnce = true,
-					TraceGuardEvery = 256,
-					HandlerWrapperNoise = true,
-				},
-			},
-		},
-	},
-
-	-- V2 Maximum: strongest of the three profiles, intentionally heavier at runtime.
-	-- All expensive transforms remain ahead of the final VM so the resulting artifact
-	-- still has one execution VM rather than nesting multiple VMs.
-	["Maximum"] = {
-		LuaVersion = "LuaU",
-		VarNamePrefix = "",
-		NameGenerator = "MangledShuffled",
-		PrettyPrint = false,
-		NumberFormat = "MixedHex",
-		Seed = 0,
-		Steps = {
-			{
-				Name = "AntiDump",
-				Settings = {
-					Enabled = true,
-					EnvNoise = 32,
-					SpawnPoison = true,
 				},
 			},
 			{Name = "EncryptStrings", Settings = {}},
@@ -172,14 +171,14 @@ return {
 				Name = "Vmify",
 				Settings = {
 					YieldEvery = 0,
-					NoiseRate = 32,
+					NoiseRate = 96,
 					FrameConstantCache = true,
 					ConstantCacheSlots = 64,
-					IntegrityStep = 1,
+					IntegrityStep = 4,
 					InstructionCache = true,
 					VerifyOnce = true,
-					TraceGuardEvery = 64,
-					HandlerWrapperNoise = true,
+					TraceGuardEvery = 256,
+					HandlerWrapperNoise = false,
 				},
 			},
 		},
@@ -197,7 +196,7 @@ return {
 		Steps = {
 			{
 				Name = "AntiDump",
-				Settings = { Enabled = true, EnvNoise = 24, SpawnPoison = false },
+				Settings = { Enabled = true, EnvNoise = 12, SpawnPoison = false },
 			},
 			{Name = "EncryptStrings", Settings = {}},
 			{
@@ -212,9 +211,9 @@ return {
 			{
 				Name = "Vmify",
 				Settings = {
-					YieldEvery = 0, NoiseRate = 48, FrameConstantCache = true, ConstantCacheSlots = 48,
-					IntegrityStep = 1, InstructionCache = true, VerifyOnce = true,
-					TraceGuardEvery = 128, HandlerWrapperNoise = true,
+					YieldEvery = 0, NoiseRate = 128, FrameConstantCache = true, ConstantCacheSlots = 48,
+					IntegrityStep = 4, InstructionCache = true, VerifyOnce = true,
+					TraceGuardEvery = 512, HandlerWrapperNoise = false,
 				},
 			},
 		},

@@ -533,20 +533,21 @@ return (function(env,...)
     local wireBase=WIREBASE
     local wireWordWidth=WIREWORDWIDTH
     local wireByteWidth=WIREBYTEWIDTH
-    local wireIndex={}
-    for i=1,#wireAlphabet do wireIndex[string.sub(wireAlphabet,i,i)]=i-1 end
+    -- Hot-path decoder: string.sub creates short-lived strings for every wire read.
+    -- string.byte is allocation-free, so keep a byte->digit lookup instead.
+    local wireIndexByte={}
+    for i=1,#wireAlphabet do
+        wireIndexByte[string.byte(wireAlphabet,i)] = i-1
+    end
+    local byte=string.byte
     local function readWord(blob,pos)
-        local a=wireIndex[string.sub(blob,pos,pos)]
-        local b=wireIndex[string.sub(blob,pos+1,pos+1)]
-        local c=wireIndex[string.sub(blob,pos+2,pos+2)]
-        local d=wireIndex[string.sub(blob,pos+3,pos+3)]
-        local e=wireIndex[string.sub(blob,pos+4,pos+4)]
+        local a,b,c,d,e=byte(blob,pos,pos+4)
+        a=wireIndexByte[a]; b=wireIndexByte[b]; c=wireIndexByte[c]; d=wireIndexByte[d]; e=wireIndexByte[e]
         return ((((a*wireBase+b)*wireBase+c)*wireBase+d)*wireBase+e)
     end
     local function readByte(blob,pos)
-        local a=wireIndex[string.sub(blob,pos,pos)]
-        local b=wireIndex[string.sub(blob,pos+1,pos+1)]
-        return a*wireBase+b
+        local a,b=byte(blob,pos,pos+1)
+        return wireIndexByte[a]*wireBase + wireIndexByte[b]
     end
     local function readWords(blob)
         local values={}
@@ -803,22 +804,22 @@ return (function(env,...)
                 end
             end
             if opcode==nil then
-                local key,cipher
+                local key,cipher,firstCipher
                 if decodeMode==1 then
                     key=(protoKey+index*STRIDE+SALT)%CIPHERMOD
-                    key=(key*CIPHERMUL1+IADD11)%CIPHERMOD; cipher=readWord(stream,offset+1); opcode=(cipher-key)%CIPHERMOD; key=(key+cipher)%CIPHERMOD
+                    key=(key*CIPHERMUL1+IADD11)%CIPHERMOD; cipher=readWord(stream,offset+1); firstCipher=cipher; opcode=(cipher-key)%CIPHERMOD; key=(key+cipher)%CIPHERMOD
                     key=(key*CIPHERMUL1+IADD12)%CIPHERMOD; cipher=readWord(stream,offset+6); a=(cipher-key)%CIPHERMOD; key=(key+cipher)%CIPHERMOD
                     key=(key*CIPHERMUL1+IADD13)%CIPHERMOD; cipher=readWord(stream,offset+11); b=(cipher-key)%CIPHERMOD; key=(key+cipher)%CIPHERMOD
                     key=(key*CIPHERMUL1+IADD14)%CIPHERMOD; cipher=readWord(stream,offset+16); c=(cipher-key)%CIPHERMOD
                 elseif decodeMode==2 then
                     key=(protoKey*3+index*STRIDE+SALT)%CIPHERMOD
-                    key=(key*CIPHERMUL2+IADD21+index)%CIPHERMOD; cipher=readWord(stream,offset+1); opcode=(cipher-key-protoKey)%CIPHERMOD; key=(key+cipher*3+1)%CIPHERMOD
+                    key=(key*CIPHERMUL2+IADD21+index)%CIPHERMOD; cipher=readWord(stream,offset+1); firstCipher=cipher; opcode=(cipher-key-protoKey)%CIPHERMOD; key=(key+cipher*3+1)%CIPHERMOD
                     key=(key*CIPHERMUL2+IADD22+index)%CIPHERMOD; cipher=readWord(stream,offset+6); a=(cipher-key-2*protoKey)%CIPHERMOD; key=(key+cipher*3+2)%CIPHERMOD
                     key=(key*CIPHERMUL2+IADD23+index)%CIPHERMOD; cipher=readWord(stream,offset+11); b=(cipher-key-3*protoKey)%CIPHERMOD; key=(key+cipher*3+3)%CIPHERMOD
                     key=(key*CIPHERMUL2+IADD24+index)%CIPHERMOD; cipher=readWord(stream,offset+16); c=(cipher-key-4*protoKey)%CIPHERMOD
                 else
                     key=(protoKey+index*STRIDE*3+SALT)%CIPHERMOD
-                    key=(key*CIPHERMUL3+IADD31+protoKey)%CIPHERMOD; cipher=readWord(stream,offset+1); opcode=(cipher-key-index)%CIPHERMOD; key=(key+cipher+7)%CIPHERMOD
+                    key=(key*CIPHERMUL3+IADD31+protoKey)%CIPHERMOD; cipher=readWord(stream,offset+1); firstCipher=cipher; opcode=(cipher-key-index)%CIPHERMOD; key=(key+cipher+7)%CIPHERMOD
                     key=(key*CIPHERMUL3+IADD32+protoKey)%CIPHERMOD; cipher=readWord(stream,offset+6); a=(cipher-key-index*2)%CIPHERMOD; key=(key+cipher+14)%CIPHERMOD
                     key=(key*CIPHERMUL3+IADD33+protoKey)%CIPHERMOD; cipher=readWord(stream,offset+11); b=(cipher-key-index*3)%CIPHERMOD; key=(key+cipher+21)%CIPHERMOD
                     key=(key*CIPHERMUL3+IADD34+protoKey)%CIPHERMOD; cipher=readWord(stream,offset+16); c=(cipher-key-index*4)%CIPHERMOD
@@ -830,7 +831,7 @@ return (function(env,...)
                     decodedCache[cacheBase]=c+CACHEMASKC
                 end
             end
-            frame.drift=(frame.drift+readWord(stream,offset+1))%DRIFTMOD
+            frame.drift=(frame.drift+(firstCipher or readWord(stream,offset+1)))%DRIFTMOD
             frame.position=(index+1)*PCMUL+PCADD+frame.drift
             local handler=dispatch[opcode]
             if not handler then error(ERRORINSTRUCTION,0) end
@@ -838,8 +839,14 @@ return (function(env,...)
         end
         local finalStatus, finalResult, finalTailFunction, finalTailArgs = frame.status, frame.result, frame.tailFunction, frame.tailArgs
         if localConstantCache then
-            for _,bucket in pairs(localConstantCache) do for k in pairs(bucket) do bucket[k]=nil end end
-            for k in pairs(localConstantCache) do localConstantCache[k]=nil end
+            local clear=table and table.clear
+            if clear then
+                clear(localConstantCache[1]); clear(localConstantCache[2])
+                clear(localConstantCache)
+            else
+                for _,bucket in pairs(localConstantCache) do for k in pairs(bucket) do bucket[k]=nil end end
+                for k in pairs(localConstantCache) do localConstantCache[k]=nil end
+            end
         end
         if finalStatus==TAIL then return finalTailFunction(unpackValues(finalTailArgs,1,finalTailArgs.n)) end
         return unpackValues(finalResult,1,finalResult.n)
