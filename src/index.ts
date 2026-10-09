@@ -23,7 +23,7 @@ import { KB_VERSION, MODELS } from "./knowledge";
 import { PromptRouter, ATTACHMENT_ONLY_PROMPT, buildSearchFollowUp } from "./router";
 import { sanitizeLanguageContamination } from "./language";
 import { loadAttachment, type DiscordAttachment } from "./files";
-import { convertMarkdownTables, extractCodeFiles, splitDiscordMessage, type CodeFile } from "./text";
+import { cleanAiFormatting, convertMarkdownTables, extractCodeFiles, splitDiscordMessage, type CodeFile } from "./text";
 import { getObfuscateCommand, handleObfuscation } from "./obfuscator";
 import {
   getDownloadCommand,
@@ -1712,9 +1712,10 @@ class StealthBot {
     }
 
     const finalAnswer = sanitizeLanguageContamination(answer, routeResult.language);
-    this.store.saveConversation(scope, memoryPrompt, finalAnswer);
+    const cleanedAnswer = cleanAiFormatting(finalAnswer);
+    this.store.saveConversation(scope, memoryPrompt, cleanedAnswer);
     this.store.trimConversationScopes(this.config.maxConversationScopes);
-    return { answer: finalAnswer, model: body.model || effectiveModel };
+    return { answer: cleanedAnswer, model: body.model || effectiveModel };
   }
 
   private async fetchGatewayStatus(): Promise<GatewayStatusResponse> {
