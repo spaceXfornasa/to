@@ -46,6 +46,40 @@ export function splitDiscordMessage(text: string, maxChars: number): string[] {
 }
 
 /**
+ * Cleans formatting quirks from AI responses:
+ * - Strips academic citation brackets like [1], [2], [1, 2], [1][2] from prose (leaves code blocks alone).
+ * - Converts asterisk bullet lists (* item) to clean dash lists (- item).
+ * - Cleans raw URL links like [https://...](https://...) into readable text or clean links.
+ */
+export function cleanAiFormatting(text: string): string {
+  const codeBlocks: string[] = [];
+  const placeholder = (idx: number) => `___SAVIERA_CODE_BLOCK_${idx}___`;
+
+  // Preserve code blocks safely
+  let processed = text.replace(/```[\s\S]*?```/g, (match) => {
+    codeBlocks.push(match);
+    return placeholder(codeBlocks.length - 1);
+  });
+
+  // 1. Remove citations like [1], [2], [1, 2], [1][2]
+  processed = processed.replace(/\s*\[\s*\d+(?:\s*,\s*\d+)*\s*\]/g, "");
+
+  // 2. Standardize bullet lists (* -> -)
+  processed = processed.replace(/^(\s*)\*\s+/gm, "$1- ");
+
+  // 3. Clean raw URL markdown link like [https://...](https://...) -> [domain/path](url)
+  processed = processed.replace(/\[https?:\/\/([^\]]+)\]\((https?:\/\/[^\)]+)\)/g, (_match, textUrl, fullUrl) => {
+    const cleanLabel = textUrl.replace(/\/+$/, "");
+    return `[${cleanLabel}](${fullUrl})`;
+  });
+
+  // Restore code blocks
+  processed = processed.replace(/___SAVIERA_CODE_BLOCK_(\d+)___/g, (_, idx) => codeBlocks[Number(idx)] ?? "");
+
+  return processed.trim();
+}
+
+/**
  * Discord does not render markdown tables, so they show up as raw pipes.
  * Converts them to bullet lists (tables inside ``` fences are left alone).
  * <=3 columns: "- **first** — second — third"; more: "- **first** — Header: value; Header: value".
