@@ -10,6 +10,7 @@ import {
   Events,
   GatewayIntentBits,
   type Message,
+  MessageFlags,
   Partials,
   PermissionFlagsBits,
   REST,
@@ -957,9 +958,12 @@ class StealthBot {
           await this.safeRemoveReaction(message, REACTION_THINKING);
           reactedThinking = false;
         }
+        const quotaMsg = `Daily limit reached: ${quota.limit} AI messages/day.\nTry again after the daily reset (${this.config.dailyResetTz}).`;
         await message.reply({
-          content: `Daily limit reached: ${quota.limit} AI messages/day.\nTry again after the daily reset (${this.config.dailyResetTz}).`,
+          ...this.buildAiErrorPayload(quotaMsg),
           allowedMentions: { repliedUser: true },
+        }).catch(() => {
+          return message.reply({ content: quotaMsg, allowedMentions: { repliedUser: true } });
         });
         return;
       }
@@ -991,7 +995,13 @@ class StealthBot {
     } catch (error) {
       if (quotaConsumed) this.refundDailyQuota(user.id, message.guildId);
       console.error("AI request failed:", error);
-      await message.reply({ content: this.publicErrorText(error), allowedMentions: { repliedUser: true } });
+      const errorMsg = this.publicErrorText(error);
+      await message.reply({
+        ...this.buildAiErrorPayload(errorMsg),
+        allowedMentions: { repliedUser: true },
+      }).catch(() => {
+        return message.reply({ content: errorMsg, allowedMentions: { repliedUser: true } });
+      });
     } finally {
       if (quotaDenied) {
         // Daily limit reached cleanly; no error reaction left on message.
@@ -1158,7 +1168,7 @@ class StealthBot {
   }
 
   private async runSlashChat(interaction: ChatInputCommandInteraction, prompt: string, attachment?: DiscordAttachment): Promise<void> {
-    await interaction.deferReply();
+    await (interaction.deferReply as any)({ flags: MessageFlags.IsComponentsV2 });
     const reply = await interaction.fetchReply();
     let reacted = false;
     try {
@@ -1185,7 +1195,13 @@ class StealthBot {
           memoryPrompt = `${prompt}\n[Attached file: ${file.name}]`;
         }
       } catch (error) {
-        await interaction.editReply(error instanceof Error ? error.message : String(error));
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        await interaction.editReply({
+          content: null,
+          ...this.buildAiErrorPayload(errorMsg),
+        }).catch(() => {
+          return interaction.editReply(errorMsg);
+        });
         return;
       }
     }
@@ -1195,7 +1211,13 @@ class StealthBot {
     if (!isAdminUser) {
       const quota = this.consumeDailyQuota(interaction.user.id, interaction.guildId);
       if (!quota.allowed) {
-        await interaction.editReply(`Daily limit reached: ${quota.limit} AI messages/day.\nTry again after the daily reset (${this.config.dailyResetTz}).`);
+        const quotaMsg = `Daily limit reached: ${quota.limit} AI messages/day.\nTry again after the daily reset (${this.config.dailyResetTz}).`;
+        await interaction.editReply({
+          content: null,
+          ...this.buildAiErrorPayload(quotaMsg),
+        }).catch(() => {
+          return interaction.editReply(quotaMsg);
+        });
         return;
       }
       quotaConsumed = true;
@@ -1221,7 +1243,13 @@ class StealthBot {
     } catch (error) {
       if (quotaConsumed) this.refundDailyQuota(interaction.user.id, interaction.guildId);
       console.error("AI request failed:", error);
-      await interaction.editReply(this.publicErrorText(error));
+      const errorMsg = this.publicErrorText(error);
+      await interaction.editReply({
+        content: null,
+        ...this.buildAiErrorPayload(errorMsg),
+      }).catch(() => {
+        return interaction.editReply(errorMsg);
+      });
     } finally {
       if (answeredSuccessfully) {
         const cleanup: Promise<unknown>[] = [
@@ -1245,20 +1273,105 @@ class StealthBot {
     return error instanceof UserFacingError ? error.message : GENERIC_AI_ERROR;
   }
 
+  private buildAiContainerPayload(content: string, footerText: string | null = null): {
+    flags: number;
+    components: any[];
+  } {
+    const containerComponents: any[] = [
+      {
+        type: 10, // TextDisplay
+        content,
+      },
+    ];
+
+    if (footerText) {
+      containerComponents.push(
+        {
+          type: 14, // Separator
+          spacing: 2,
+        },
+        {
+          type: 10, // TextDisplay (Footer)
+          content: footerText,
+        },
+      );
+    }
+
+    return {
+      flags: MessageFlags.IsComponentsV2,
+      components: [
+        {
+          type: 17, // Clean Container (no accent_color)
+          components: containerComponents,
+        },
+      ],
+    };
+  }
+
+  private buildAiErrorPayload(errorMessage: string): { flags: number; components: any[] } {
+    return {
+      flags: MessageFlags.IsComponentsV2,
+      components: [
+        {
+          type: 17, // Clean Container (no accent_color)
+          components: [
+            {
+              type: 10, // TextDisplay
+              content: `<:close:1555770497290080277> **AI Request Notice**\n${errorMessage}\n-# Saviera AI`,
+            },
+          ],
+        },
+      ],
+    };
+  }
+
   private async editAndSendSlashAnswer(interaction: ChatInputCommandInteraction, text: string, files: CodeFile[], model: string): Promise<void> {
     const sanitized = text;
     const footer = await this.buildAiFooter(model);
-    const footerBudget = Math.max(100, this.config.maxResponseChars - footer.length - 2);
-    const chunks = splitDiscordMessage(sanitized, footerBudget);
+    const chunks = splitDiscordMessage(sanitized, this.config.maxResponseChars);
     const isSingle = chunks.length === 1;
     const firstFiles = isSingle ? files : [];
-    const firstContent = isSingle ? `${chunks[0]}${footer}` : chunks[0];
-    await interaction.editReply({ content: firstContent, files: firstFiles.map((file) => this.toAttachment(file)) });
+    const footerForFirst = isSingle && footer ? footer : null;
+    const firstPayload = this.buildAiContainerPayload(chunks[0], footerForFirst);
+
+    try {
+      await interaction.editReply({
+        content: null,
+        ...firstPayload,
+        files: firstFiles.map((file) => this.toAttachment(file)),
+      });
+    } catch (error) {
+      console.warn("Failed to edit slash reply with Components V2, falling back to standard content:", error);
+      const fallbackContent = footerForFirst ? `${chunks[0]}\n\n${footerForFirst}` : chunks[0];
+      await interaction.editReply({
+        content: fallbackContent,
+        components: [],
+        files: firstFiles.map((file) => this.toAttachment(file)),
+      });
+    }
+
     for (let i = 1; i < chunks.length; i += 1) {
       const isLast = i === chunks.length - 1;
       const attach = isLast ? files : [];
-      const content = isLast ? `${chunks[i]}${footer}` : chunks[i];
-      await interaction.followUp({ content, files: attach.map((file) => this.toAttachment(file)), allowedMentions: { parse: [] } });
+      const footerForChunk = isLast && footer ? footer : null;
+      const followUpPayload = this.buildAiContainerPayload(chunks[i], footerForChunk);
+
+      try {
+        await interaction.followUp({
+          ...followUpPayload,
+          files: attach.map((file) => this.toAttachment(file)),
+          allowedMentions: { parse: [] },
+        });
+      } catch (error) {
+        console.warn("Failed to send slash follow-up with Components V2, falling back to standard content:", error);
+        const fallbackContent = footerForChunk ? `${chunks[i]}\n\n${footerForChunk}` : chunks[i];
+        await interaction.followUp({
+          content: fallbackContent,
+          components: [],
+          files: attach.map((file) => this.toAttachment(file)),
+          allowedMentions: { parse: [] },
+        });
+      }
     }
   }
 
@@ -1306,7 +1419,10 @@ class StealthBot {
     if (!SHOW_MODEL_BADGE) return "";
     const badge = this.getModelBadge(model);
     const emoji = await this.resolveCustomEmojiTag(badge.emojiId, badge.fallbackName);
-    return `\n\n${emoji} ${badge.label}`;
+    if (badge.displayName === "Saviera AI") {
+      return `-# ${emoji} **Saviera AI**`;
+    }
+    return `-# ${emoji} **${badge.displayName}** • Saviera AI`;
   }
 
   private async sendMessageAnswer(message: Message, answer: string, model: string): Promise<void> {
@@ -1314,35 +1430,66 @@ class StealthBot {
     const withoutTables = convertMarkdownTables(sanitized);
     const { text, files } = extractCodeFiles(withoutTables);
     const footer = await this.buildAiFooter(model);
-    const footerBudget = Math.max(100, this.config.maxResponseChars - footer.length - 2);
-    const chunks = splitDiscordMessage(text, footerBudget);
+    const chunks = splitDiscordMessage(text, this.config.maxResponseChars);
 
     for (let i = 0; i < chunks.length; i += 1) {
       const isLast = i === chunks.length - 1;
       const attach = isLast ? files : [];
-      // Only attach footer to the very last chunk
-      const content = isLast ? `${chunks[i]}${footer}` : chunks[i];
+      const footerForChunk = isLast && footer ? footer : null;
+      const payload = this.buildAiContainerPayload(chunks[i], footerForChunk);
+      const attachments = attach.map((file) => this.toAttachment(file));
 
       if (i === 0) {
-        await message.reply({
-          content,
-          files: attach.map((file) => this.toAttachment(file)),
-          allowedMentions: { repliedUser: true },
-        });
+        try {
+          await message.reply({
+            ...payload,
+            files: attachments,
+            allowedMentions: { repliedUser: true },
+          });
+        } catch (error) {
+          console.warn("Failed to send Components V2 reply, falling back to standard content:", error);
+          const fallbackContent = footerForChunk ? `${chunks[i]}\n\n${footerForChunk}` : chunks[i];
+          await message.reply({
+            content: fallbackContent,
+            files: attachments,
+            allowedMentions: { repliedUser: true },
+          });
+        }
       } else {
         // Continuation chunks: send as clean follow-up without re-quoting the user message
-        if ("send" in message.channel && typeof message.channel.send === "function") {
-          await message.channel.send({
-            content,
-            files: attach.map((file) => this.toAttachment(file)),
-            allowedMentions: { parse: [] },
-          });
+        const channel = message.channel;
+        if ("send" in channel && typeof channel.send === "function") {
+          try {
+            await channel.send({
+              ...payload,
+              files: attachments,
+              allowedMentions: { parse: [] },
+            });
+          } catch (error) {
+            console.warn("Failed to send Components V2 continuation, falling back to standard content:", error);
+            const fallbackContent = footerForChunk ? `${chunks[i]}\n\n${footerForChunk}` : chunks[i];
+            await channel.send({
+              content: fallbackContent,
+              files: attachments,
+              allowedMentions: { parse: [] },
+            });
+          }
         } else {
-          await message.reply({
-            content,
-            files: attach.map((file) => this.toAttachment(file)),
-            allowedMentions: { repliedUser: false, parse: [] },
-          });
+          try {
+            await message.reply({
+              ...payload,
+              files: attachments,
+              allowedMentions: { repliedUser: false, parse: [] },
+            });
+          } catch (error) {
+            console.warn("Failed to send Components V2 reply continuation, falling back to standard content:", error);
+            const fallbackContent = footerForChunk ? `${chunks[i]}\n\n${footerForChunk}` : chunks[i];
+            await message.reply({
+              content: fallbackContent,
+              files: attachments,
+              allowedMentions: { repliedUser: false, parse: [] },
+            });
+          }
         }
       }
     }
