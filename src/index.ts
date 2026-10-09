@@ -1273,7 +1273,11 @@ class StealthBot {
     return error instanceof UserFacingError ? error.message : GENERIC_AI_ERROR;
   }
 
-  private buildAiContainerPayload(content: string, footerText: string | null = null): {
+  private buildAiContainerPayload(
+    content: string,
+    footerText: string | null = null,
+    files: Array<{ name: string }> = [],
+  ): {
     flags: number;
     components: any[];
   } {
@@ -1283,6 +1287,24 @@ class StealthBot {
         content,
       },
     ];
+
+    if (files.length > 0) {
+      for (const file of files) {
+        containerComponents.push(
+          {
+            type: 14, // Separator
+            spacing: 2,
+          },
+          {
+            type: 13, // File component (renders native download card in Components V2)
+            file: {
+              url: `attachment://${file.name}`,
+            },
+            spoiler: false,
+          },
+        );
+      }
+    }
 
     if (footerText) {
       containerComponents.push(
@@ -1332,7 +1354,7 @@ class StealthBot {
     const isSingle = chunks.length === 1;
     const firstFiles = isSingle ? files : [];
     const footerForFirst = isSingle && footer ? footer : null;
-    const firstPayload = this.buildAiContainerPayload(chunks[0], footerForFirst);
+    const firstPayload = this.buildAiContainerPayload(chunks[0], footerForFirst, firstFiles);
 
     try {
       await interaction.editReply({
@@ -1354,7 +1376,7 @@ class StealthBot {
       const isLast = i === chunks.length - 1;
       const attach = isLast ? files : [];
       const footerForChunk = isLast && footer ? footer : null;
-      const followUpPayload = this.buildAiContainerPayload(chunks[i], footerForChunk);
+      const followUpPayload = this.buildAiContainerPayload(chunks[i], footerForChunk, attach);
 
       try {
         await interaction.followUp({
@@ -1436,7 +1458,7 @@ class StealthBot {
       const isLast = i === chunks.length - 1;
       const attach = isLast ? files : [];
       const footerForChunk = isLast && footer ? footer : null;
-      const payload = this.buildAiContainerPayload(chunks[i], footerForChunk);
+      const payload = this.buildAiContainerPayload(chunks[i], footerForChunk, attach);
       const attachments = attach.map((file) => this.toAttachment(file));
 
       if (i === 0) {
