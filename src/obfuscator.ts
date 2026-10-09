@@ -47,33 +47,20 @@ const WATERMARK = "Stealth-X Obfuscator";
 function createObfSuccessPayload({
   sourceName,
   preset,
-  luaVersion,
-  seed,
-  ratio,
-  outputLength,
   outputFilename,
 }: {
   sourceName: string;
   preset: string;
-  luaVersion: string;
-  seed: number;
-  ratio: string;
-  outputLength: number;
+  luaVersion?: string;
+  seed?: number;
+  ratio?: string;
+  outputLength?: number;
   outputFilename?: string;
 }): any {
-  const luaLabel = LUA_VERSION_LABELS[luaVersion] || luaVersion;
   const containerComponents: any[] = [
     {
       type: 10, // TextDisplay (Heading)
       content: `## Obfuscation Complete <:tick:1555773804095995964>\n**${sourceName}** obfuscated with hardened **${preset}**`,
-    },
-    {
-      type: 14, // Separator
-      spacing: 2,
-    },
-    {
-      type: 10, // TextDisplay (Stats)
-      content: `**Preset:** \`${preset}\`\n**Lua Version:** \`${luaLabel}\`\n**Seed:** \`${seed}\`\n**Size Ratio:** \`${ratio}%\`\n**Output:** \`${(outputLength / 1000).toFixed(1)} KB\`\n\n-# ${WATERMARK}`,
     },
   ];
 
@@ -92,6 +79,17 @@ function createObfSuccessPayload({
       },
     );
   }
+
+  containerComponents.push(
+    {
+      type: 14, // Separator
+      spacing: 2,
+    },
+    {
+      type: 10, // TextDisplay (Footer)
+      content: `-# ${WATERMARK}`,
+    },
+  );
 
   return {
     flags: MessageFlags.IsComponentsV2,
@@ -508,13 +506,6 @@ export async function handleObfuscation(client: Client, interaction: ChatInputCo
           .setColor(COLOR_SUCCESS)
           .setTitle("Obfuscation Complete")
           .setDescription(`**${sourceName}** obfuscated with hardened **${preset}**`)
-          .addFields(
-            { name: "Preset", value: preset, inline: true },
-            { name: "Lua Version", value: LUA_VERSION_LABELS[luaVersion] || luaVersion, inline: true },
-            { name: "Seed", value: String(seed), inline: true },
-            { name: "Size Ratio", value: `${ratio}%`, inline: true },
-            { name: "Output", value: `${(output.length / 1000).toFixed(1)} KB`, inline: true },
-          )
           .setFooter({ text: WATERMARK });
 
         try {
@@ -524,10 +515,6 @@ export async function handleObfuscation(client: Client, interaction: ChatInputCo
             ...createObfSuccessPayload({
               sourceName,
               preset,
-              luaVersion,
-              seed,
-              ratio,
-              outputLength: output.length,
               outputFilename,
             }),
             files,
