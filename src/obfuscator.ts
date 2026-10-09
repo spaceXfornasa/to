@@ -51,6 +51,7 @@ function createObfSuccessPayload({
   seed,
   ratio,
   outputLength,
+  outputFilename,
 }: {
   sourceName: string;
   preset: string;
@@ -58,27 +59,46 @@ function createObfSuccessPayload({
   seed: number;
   ratio: string;
   outputLength: number;
+  outputFilename?: string;
 }): any {
   const luaLabel = LUA_VERSION_LABELS[luaVersion] || luaVersion;
+  const containerComponents: any[] = [
+    {
+      type: 10, // TextDisplay (Heading)
+      content: `## Obfuscation Complete <:tick:1555773804095995964>\n**${sourceName}** obfuscated with hardened **${preset}**`,
+    },
+    {
+      type: 14, // Separator
+      spacing: 2,
+    },
+    {
+      type: 10, // TextDisplay (Stats)
+      content: `**Preset:** \`${preset}\`\n**Lua Version:** \`${luaLabel}\`\n**Seed:** \`${seed}\`\n**Size Ratio:** \`${ratio}%\`\n**Output:** \`${(outputLength / 1000).toFixed(1)} KB\`\n\n-# ${WATERMARK}`,
+    },
+  ];
+
+  if (outputFilename) {
+    containerComponents.push(
+      {
+        type: 14, // Separator
+        spacing: 2,
+      },
+      {
+        type: 13, // File component (renders native download card in Components V2)
+        file: {
+          url: `attachment://${outputFilename}`,
+        },
+        spoiler: false,
+      },
+    );
+  }
+
   return {
     flags: MessageFlags.IsComponentsV2,
     components: [
       {
         type: 17, // Clean Container (no accent_color)
-        components: [
-          {
-            type: 10, // TextDisplay (Heading)
-            content: `## Obfuscation Complete <:tick:1555773804095995964>\n**${sourceName}** obfuscated with hardened **${preset}**`,
-          },
-          {
-            type: 14, // Separator
-            spacing: 2,
-          },
-          {
-            type: 10, // TextDisplay (Stats)
-            content: `**Preset:** \`${preset}\`\n**Lua Version:** \`${luaLabel}\`\n**Seed:** \`${seed}\`\n**Size Ratio:** \`${ratio}%\`\n**Output:** \`${(outputLength / 1000).toFixed(1)} KB\`\n\n-# ${WATERMARK}`,
-          },
-        ],
+        components: containerComponents,
       },
     ],
   };
@@ -481,7 +501,8 @@ export async function handleObfuscation(client: Client, interaction: ChatInputCo
         const output = result.output ?? "";
         const ratio = code.length ? ((output.length / code.length) * 100).toFixed(1) : "0.0";
         const outputBuffer = Buffer.from(output, "utf-8");
-        const files = [{ attachment: outputBuffer, name: randomOutputFilename() }];
+        const outputFilename = randomOutputFilename();
+        const files = [{ attachment: outputBuffer, name: outputFilename }];
 
         const fallbackEmbed = new EmbedBuilder()
           .setColor(COLOR_SUCCESS)
@@ -507,6 +528,7 @@ export async function handleObfuscation(client: Client, interaction: ChatInputCo
               seed,
               ratio,
               outputLength: output.length,
+              outputFilename,
             }),
             files,
           });
