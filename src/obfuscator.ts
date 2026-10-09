@@ -2,6 +2,7 @@ import {
   type ChatInputCommandInteraction,
   Client,
   EmbedBuilder,
+  MessageFlags,
   SlashCommandBuilder,
 } from "discord.js";
 
@@ -41,6 +42,64 @@ const LUA_VERSION_LABELS: Record<string, string> = {
 
 const COLOR_ERROR = 0x992222;
 const COLOR_SUCCESS = 0x000000;
+const WATERMARK = "Stealth-X Obfuscator";
+
+function createObfSuccessPayload({
+  sourceName,
+  preset,
+  luaVersion,
+  seed,
+  ratio,
+  outputLength,
+}: {
+  sourceName: string;
+  preset: string;
+  luaVersion: string;
+  seed: number;
+  ratio: string;
+  outputLength: number;
+}): any {
+  const luaLabel = LUA_VERSION_LABELS[luaVersion] || luaVersion;
+  return {
+    flags: MessageFlags.IsComponentsV2,
+    components: [
+      {
+        type: 17, // Clean Container (no accent_color)
+        components: [
+          {
+            type: 10, // TextDisplay (Heading)
+            content: `## Obfuscation Complete <:tick:1555773804095995964>\n**${sourceName}** obfuscated with hardened **${preset}**`,
+          },
+          {
+            type: 14, // Separator
+            spacing: 2,
+          },
+          {
+            type: 10, // TextDisplay (Stats)
+            content: `**Preset:** \`${preset}\`\n**Lua Version:** \`${luaLabel}\`\n**Seed:** \`${seed}\`\n**Size Ratio:** \`${ratio}%\`\n**Output:** \`${(outputLength / 1000).toFixed(1)} KB\`\n\n-# ${WATERMARK}`,
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function createObfErrorPayload(title: string, message: string): any {
+  return {
+    flags: MessageFlags.IsComponentsV2,
+    components: [
+      {
+        type: 17, // Clean Container (no accent_color)
+        components: [
+          {
+            type: 10, // TextDisplay
+            content: `<:close:1555770497290080277> **${title}**\n${message}\n\n-# ${WATERMARK}`,
+          },
+        ],
+      },
+    ],
+  };
+}
 
 const MAX_CODE_LENGTH = Number.parseInt(process.env.MAX_CODE_LENGTH || "1000000", 10);
 const MAX_FILE_SIZE = Number.parseInt(process.env.MAX_FILE_SIZE || "5000000", 10);
@@ -220,60 +279,83 @@ export async function handleObfuscation(client: Client, interaction: ChatInputCo
 
   if (!attachment && !rawCode) {
     await interaction.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(COLOR_ERROR)
-          .setTitle("Input Required")
-          .setDescription("Upload a **.lua** file using the `file` option, or paste code directly into the `code` option."),
-      ],
-      ephemeral: true,
+      ...createObfErrorPayload("Input Required", "Upload a **.lua** file using the `file` option, or paste code directly into the `code` option."),
+      flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
+    }).catch(() => {
+      return interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(COLOR_ERROR)
+            .setTitle("Input Required")
+            .setDescription("Upload a **.lua** file using the `file` option, or paste code directly into the `code` option."),
+        ],
+        ephemeral: true,
+      });
     });
     return;
   }
 
   if (!PRESETS.includes(preset)) {
     await interaction.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(COLOR_ERROR)
-          .setTitle("Invalid Preset")
-          .setDescription(`Valid presets: ${PRESETS.join(", ")}`),
-      ],
-      ephemeral: true,
+      ...createObfErrorPayload("Invalid Preset", `Valid presets: ${PRESETS.join(", ")}`),
+      flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
+    }).catch(() => {
+      return interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(COLOR_ERROR)
+            .setTitle("Invalid Preset")
+            .setDescription(`Valid presets: ${PRESETS.join(", ")}`),
+        ],
+        ephemeral: true,
+      });
     });
     return;
   }
 
   if (!LUA_VERSIONS.includes(luaVersion)) {
     await interaction.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(COLOR_ERROR)
-          .setTitle("Invalid Lua Version")
-          .setDescription(`Valid versions: ${LUA_VERSIONS.join(", ")}`),
-      ],
-      ephemeral: true,
+      ...createObfErrorPayload("Invalid Lua Version", `Valid versions: ${LUA_VERSIONS.join(", ")}`),
+      flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
+    }).catch(() => {
+      return interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(COLOR_ERROR)
+            .setTitle("Invalid Lua Version")
+            .setDescription(`Valid versions: ${LUA_VERSIONS.join(", ")}`),
+        ],
+        ephemeral: true,
+      });
     });
     return;
   }
 
   if (attachment && attachment.size > MAX_FILE_SIZE) {
     await interaction.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(COLOR_ERROR)
-          .setTitle("File Too Large")
-          .setDescription(
-            `Maximum file size is ${(MAX_FILE_SIZE / 1_000_000).toFixed(1)} MB. "${attachment.name}" is ${(attachment.size / 1000).toFixed(0)} KB.`,
-          ),
-      ],
-      ephemeral: true,
+      ...createObfErrorPayload(
+        "File Too Large",
+        `Maximum file size is ${(MAX_FILE_SIZE / 1_000_000).toFixed(1)} MB. "${attachment.name}" is ${(attachment.size / 1000).toFixed(0)} KB.`,
+      ),
+      flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
+    }).catch(() => {
+      return interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(COLOR_ERROR)
+            .setTitle("File Too Large")
+            .setDescription(
+              `Maximum file size is ${(MAX_FILE_SIZE / 1_000_000).toFixed(1)} MB. "${attachment.name}" is ${(attachment.size / 1000).toFixed(0)} KB.`,
+            ),
+        ],
+        ephemeral: true,
+      });
     });
     return;
   }
 
   try {
-    await interaction.deferReply();
+    await (interaction.deferReply as any)({ flags: MessageFlags.IsComponentsV2 });
   } catch {
     return;
   }
@@ -300,14 +382,26 @@ export async function handleObfuscation(client: Client, interaction: ChatInputCo
         if (typeof code !== "string") throw new Error("Input source is not valid text.");
 
         if (code.length > MAX_CODE_LENGTH) {
-          return interaction.editReply({
-            embeds: [
-              new EmbedBuilder()
-                .setColor(COLOR_ERROR)
-                .setTitle("Code Too Long")
-                .setDescription(`Maximum code length is ${MAX_CODE_LENGTH.toLocaleString()} characters. Yours is ${code.length.toLocaleString()}.`),
-            ],
-          });
+          const errPayload = createObfErrorPayload(
+            "Code Too Long",
+            `Maximum code length is ${MAX_CODE_LENGTH.toLocaleString()} characters. Yours is ${code.length.toLocaleString()}.`,
+          );
+          try {
+            return await interaction.editReply({
+              content: null,
+              embeds: [],
+              ...errPayload,
+            });
+          } catch {
+            return interaction.editReply({
+              embeds: [
+                new EmbedBuilder()
+                  .setColor(COLOR_ERROR)
+                  .setTitle("Code Too Long")
+                  .setDescription(`Maximum code length is ${MAX_CODE_LENGTH.toLocaleString()} characters. Yours is ${code.length.toLocaleString()}.`),
+              ],
+            });
+          }
         }
 
         const workPromise = runPrometheus({
@@ -331,16 +425,28 @@ export async function handleObfuscation(client: Client, interaction: ChatInputCo
 
         if (timedOut) {
           workPromise.catch(() => {});
-          await interaction.editReply({
-            embeds: [
-              new EmbedBuilder()
-                .setColor(COLOR_ERROR)
-                .setTitle("Obfuscation Timed Out")
-                .setDescription(
-                  `The job exceeded ${Math.round(OBF_TIMEOUT_MS / 1000)} seconds and was stopped from the user's perspective. The worker will finish releasing its resources before accepting another job.`,
-                ),
-            ],
-          });
+          const errPayload = createObfErrorPayload(
+            "Obfuscation Timed Out",
+            `The job exceeded ${Math.round(OBF_TIMEOUT_MS / 1000)} seconds and was stopped from the user's perspective. The worker will finish releasing its resources before accepting another job.`,
+          );
+          try {
+            await interaction.editReply({
+              content: null,
+              embeds: [],
+              ...errPayload,
+            });
+          } catch {
+            await interaction.editReply({
+              embeds: [
+                new EmbedBuilder()
+                  .setColor(COLOR_ERROR)
+                  .setTitle("Obfuscation Timed Out")
+                  .setDescription(
+                    `The job exceeded ${Math.round(OBF_TIMEOUT_MS / 1000)} seconds and was stopped from the user's perspective. The worker will finish releasing its resources before accepting another job.`,
+                  ),
+              ],
+            });
+          }
           return;
         }
 
@@ -349,25 +455,35 @@ export async function handleObfuscation(client: Client, interaction: ChatInputCo
             .filter((log) => log.level === "error")
             .map((log) => log.message)
             .join("\n");
+          const failMsg = `\`\`\`\n${(errorLogs || result?.error || "Prometheus failed").slice(0, 3800)}\n\`\`\`\nPreset: \`${preset}\`  |  Lua: \`${LUA_VERSION_LABELS[luaVersion] || luaVersion}\``;
 
-          return interaction.editReply({
-            embeds: [
-              new EmbedBuilder()
-                .setColor(COLOR_ERROR)
-                .setTitle("Obfuscation Failed")
-                .setDescription(`\`\`\`\n${(errorLogs || result?.error || "Prometheus failed").slice(0, 4000)}\n\`\`\``)
-                .setFooter({
-                  text: `Preset: ${preset}  |  Lua: ${LUA_VERSION_LABELS[luaVersion] || luaVersion}`,
-                }),
-            ],
-          });
+          try {
+            return await interaction.editReply({
+              content: null,
+              embeds: [],
+              ...createObfErrorPayload("Obfuscation Failed", failMsg),
+            });
+          } catch {
+            return interaction.editReply({
+              embeds: [
+                new EmbedBuilder()
+                  .setColor(COLOR_ERROR)
+                  .setTitle("Obfuscation Failed")
+                  .setDescription(`\`\`\`\n${(errorLogs || result?.error || "Prometheus failed").slice(0, 4000)}\n\`\`\``)
+                  .setFooter({
+                    text: `Preset: ${preset}  |  Lua: ${LUA_VERSION_LABELS[luaVersion] || luaVersion}`,
+                  }),
+              ],
+            });
+          }
         }
 
         const output = result.output ?? "";
         const ratio = code.length ? ((output.length / code.length) * 100).toFixed(1) : "0.0";
         const outputBuffer = Buffer.from(output, "utf-8");
+        const files = [{ attachment: outputBuffer, name: randomOutputFilename() }];
 
-        const embed = new EmbedBuilder()
+        const fallbackEmbed = new EmbedBuilder()
           .setColor(COLOR_SUCCESS)
           .setTitle("Obfuscation Complete")
           .setDescription(`**${sourceName}** obfuscated with hardened **${preset}**`)
@@ -378,42 +494,84 @@ export async function handleObfuscation(client: Client, interaction: ChatInputCo
             { name: "Size Ratio", value: `${ratio}%`, inline: true },
             { name: "Output", value: `${(output.length / 1000).toFixed(1)} KB`, inline: true },
           )
-          .setFooter({ text: "Stealth-X Obfuscator" });
+          .setFooter({ text: WATERMARK });
 
-        return interaction.editReply({
-          embeds: [embed],
-          files: [{ attachment: outputBuffer, name: randomOutputFilename() }],
-        });
+        try {
+          return await interaction.editReply({
+            content: null,
+            embeds: [],
+            ...createObfSuccessPayload({
+              sourceName,
+              preset,
+              luaVersion,
+              seed,
+              ratio,
+              outputLength: output.length,
+            }),
+            files,
+          });
+        } catch (error) {
+          console.warn("Failed to edit obfuscation reply with Components V2, falling back to embed:", error);
+          return await interaction.editReply({
+            content: null,
+            components: [],
+            embeds: [fallbackEmbed],
+            files,
+          });
+        }
       } catch (error) {
         console.error("Obfuscation job error:", error);
-        return interaction.editReply({
-          embeds: [
-            new EmbedBuilder()
-              .setColor(COLOR_ERROR)
-              .setTitle("Obfuscation Error")
-              .setDescription(`\`\`\`\n${String(error instanceof Error ? error.message : error).slice(0, 4000)}\n\`\`\``),
-          ],
-        });
+        const errMsg = `\`\`\`\n${String(error instanceof Error ? error.message : error).slice(0, 3800)}\n\`\`\``;
+        try {
+          return await interaction.editReply({
+            content: null,
+            embeds: [],
+            ...createObfErrorPayload("Obfuscation Error", errMsg),
+          });
+        } catch {
+          return interaction.editReply({
+            embeds: [
+              new EmbedBuilder()
+                .setColor(COLOR_ERROR)
+                .setTitle("Obfuscation Error")
+                .setDescription(`\`\`\`\n${String(error instanceof Error ? error.message : error).slice(0, 4000)}\n\`\`\``),
+            ],
+          });
+        }
       } finally {
         code = null;
       }
     });
   } catch (error) {
     if (error instanceof Error && error.message === "QUEUE_FULL") {
-      await interaction.editReply({ content: "The obfuscator is busy. Please try again in a moment." });
+      const qPayload = createObfErrorPayload("Obfuscator Busy", "The obfuscator is busy. Please try again in a moment.");
+      await interaction.editReply({
+        content: null,
+        embeds: [],
+        ...qPayload,
+      }).catch(() => {
+        return interaction.editReply({ content: "The obfuscator is busy. Please try again in a moment." });
+      });
       return;
     }
 
     console.error("Obfuscator interaction error:", error);
     if (interaction.deferred || interaction.replied) {
+      const errMsg = `\`\`\`\n${String(error instanceof Error ? error.stack || error.message : error).slice(0, 3800)}\n\`\`\``;
       await interaction.editReply({
-        embeds: [
-          new EmbedBuilder()
-            .setColor(COLOR_ERROR)
-            .setTitle("Internal Error")
-            .setDescription(`\`\`\`\n${String(error instanceof Error ? error.stack || error.message : error).slice(0, 4000)}\n\`\`\``),
-        ],
-      }).catch(() => {});
+        content: null,
+        embeds: [],
+        ...createObfErrorPayload("Internal Error", errMsg),
+      }).catch(() => {
+        return interaction.editReply({
+          embeds: [
+            new EmbedBuilder()
+              .setColor(COLOR_ERROR)
+              .setTitle("Internal Error")
+              .setDescription(`\`\`\`\n${String(error instanceof Error ? error.stack || error.message : error).slice(0, 4000)}\n\`\`\``),
+          ],
+        }).catch(() => {});
+      });
     }
   }
 }
