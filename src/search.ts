@@ -124,22 +124,22 @@ export class TavilySearchManager {
     if (results.length === 0 && !directAnswer) return "";
 
     const parts: string[] = [
-      `WEB SEARCH RESULTS (Query: "${query}"):`,
+      `WEB SEARCH DATA (Query: "${query}"):`,
     ];
 
     if (directAnswer) {
-      parts.push(`SEARCH ENGINE DIRECT SUMMARY:\n${directAnswer}`);
+      parts.push(`SEARCH SUMMARY:\n${directAnswer}`);
     }
 
     if (results.length > 0) {
       const items = results.map(
-        (r, i) => `[${i + 1}] "${r.title}"\nURL: ${r.url}\nSnippet: ${r.content.slice(0, 1000)}`
+        (r, i) => `Source ${i + 1}: "${r.title}"\nURL: ${r.url}\nInformation: ${r.content.slice(0, 1000)}`
       );
-      parts.push(`WEB SOURCES & CITATIONS:\n${items.join("\n\n")}`);
+      parts.push(`WEB SOURCES:\n${items.join("\n\n")}`);
     }
 
     parts.push(
-      "INSTRUCTION: Use the search engine data above to answer the user accurately, concisely, and naturally in the user's language. Keep the response compact (under 1,400 characters, summarizing the top 3-4 key takeaways) so it fits in a single Discord message. Cite specific facts, names, dates, and include source URLs when helpful."
+      "INSTRUCTION: Synthesize the web search data into a clean, well-structured Discord response in the user's language (under 1,400 characters). Format items as clean bullet points ('- **Name**: Description'). Embed relevant links naturally as markdown [Title](url). DO NOT include numeric citations or reference brackets like [1], [2], [3] anywhere in the response."
     );
 
     return parts.join("\n\n");
