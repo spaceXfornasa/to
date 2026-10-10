@@ -67,10 +67,6 @@ function createObfSuccessPayload({
   if (outputFilename) {
     containerComponents.push(
       {
-        type: 14, // Separator
-        spacing: 2,
-      },
-      {
         type: 13, // File component (renders native download card in Components V2)
         file: {
           url: `attachment://${outputFilename}`,
