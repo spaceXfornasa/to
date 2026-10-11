@@ -33,6 +33,7 @@ import {
   handleScraperButton,
   handleScraperMessage,
 } from "./scraper";
+import { getRoleCommand, handleRoleButton, handleRoleCommand } from "./role";
 import { TavilySearchManager } from "./search";
 
 const DISCORD_USER_AGENT = "StealthAI Discord Bot/1.0";
@@ -250,6 +251,7 @@ function buildSlashCommands(): (SlashCommandBuilder | SlashCommandOptionsOnlyBui
     getObfuscateCommand(),
     getDownloadCommand(),
     getPingCommand(),
+    getRoleCommand(),
     new SlashCommandBuilder()
       .setName("ask")
       .setDescription("Ask the AI a question")
@@ -502,9 +504,16 @@ class StealthBot {
         return;
       }
       if (interaction.isButton()) {
-        void handleScraperButton(interaction).catch((error) => {
-          console.error("Button handler failed:", error);
-        });
+        void (async () => {
+          try {
+            const handledScraper = await handleScraperButton(interaction);
+            if (handledScraper) return;
+            const handledRole = await handleRoleButton(interaction);
+            if (handledRole) return;
+          } catch (error) {
+            console.error("Button handler failed:", error);
+          }
+        })();
         return;
       }
       if (!interaction.isChatInputCommand()) return;
@@ -1041,6 +1050,10 @@ class StealthBot {
     }
     if (command === "ping") {
       await handlePingCommand(interaction);
+      return;
+    }
+    if (command === "role") {
+      await handleRoleCommand(interaction, this.config.adminIds);
       return;
     }
     const user = interaction.user;
