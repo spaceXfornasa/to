@@ -768,7 +768,7 @@ class StealthBot {
     if (!utilityCommands.has(command)) return false;
 
     if (command === "script") {
-      await message.channel.send(buildScriptPanelPayload());
+      await message.reply(buildScriptPanelPayload());
       return true;
     }
     if (command === "hi") {
