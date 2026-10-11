@@ -5,6 +5,7 @@ import {
   ActivityType,
   type AutocompleteInteraction,
   AttachmentBuilder,
+  type ButtonInteraction,
   type ChatInputCommandInteraction,
   Client,
   Events,
@@ -50,6 +51,48 @@ const REACTION_DONE_FALLBACK_NAME = "check";
 const REACTION_SEARCH_ID = process.env.DISCORD_REACTION_SEARCH_ID?.trim() || "1556145750344204418";
 const REACTION_SEARCH_FALLBACK_NAME = "1556145750344204418";
 const REACTION_ERROR = "1555770497290080277";
+const SCRIPT_PRO_BUTTON_ID = "stealthx_script:pro";
+const SCRIPT_FREE_BUTTON_ID = "stealthx_script:free";
+const STEALTHX_LOADER_URL = "https://api.bytecode.my.id/loader.lua";
+const PRO_LOADSTRING = `getgenv().Key = "YOUR_KEY_HERE"\nloadstring(game:HttpGet("${STEALTHX_LOADER_URL}"))()`;
+const FREE_LOADSTRING = `loadstring(game:HttpGet("${STEALTHX_LOADER_URL}"))()`;
+
+function buildScriptPanelPayload(): any {
+  return {
+    flags: MessageFlags.IsComponentsV2,
+    components: [
+      {
+        type: 17, // Container
+        components: [
+          {
+            type: 10, // TextDisplay
+            content: `# Pro Plan\nPremium access with key authentication.\n\`\`\`lua\n${PRO_LOADSTRING}\n\`\`\`\n# Free Plan\nStandard access. No key required.\n**Desktop**\n\`\`\`lua\n${FREE_LOADSTRING}\n\`\`\``,
+          },
+        ],
+      },
+      {
+        type: 1, // ActionRow
+        components: [
+          {
+            type: 2, // Button
+            style: 1,
+            label: "Copy Pro",
+            emoji: { id: "1558861149704036523", name: "unknown", animated: false },
+            custom_id: SCRIPT_PRO_BUTTON_ID,
+          },
+          {
+            type: 2, // Button
+            style: 2,
+            label: "Copy Free",
+            emoji: { id: "1558861201423994961", name: "unknown", animated: false },
+            custom_id: SCRIPT_FREE_BUTTON_ID,
+          },
+        ],
+      },
+    ],
+    allowedMentions: { parse: [] },
+  };
+}
 
 interface ModelBadge {
   emojiId: string;
@@ -510,6 +553,8 @@ class StealthBot {
             if (handledScraper) return;
             const handledRole = await handleRoleButton(interaction);
             if (handledRole) return;
+            const handledScript = await this.handleScriptButton(interaction);
+            if (handledScript) return;
           } catch (error) {
             console.error("Button handler failed:", error);
           }
@@ -677,6 +722,10 @@ class StealthBot {
     } else if (content.startsWith(this.config.prefix)) {
       prompt = content.slice(this.config.prefix.length).trim();
       source = "prefix";
+    } else if (/^\?script(?:\s|$)/i.test(content)) {
+      // Keep ?script available even when the general bot prefix is configured differently.
+      prompt = content.slice(1).trim();
+      source = "prefix";
     } else if (message.channelId === AI_CHANNEL_ID) {
       // Dedicated Saviera channel: every normal message is an AI prompt.
       prompt = content;
@@ -715,9 +764,13 @@ class StealthBot {
   }
 
   private async tryTextCommand(message: Message, command: string, args: string): Promise<boolean> {
-    const utilityCommands = new Set(["hi", "help", "models", "model", "reset", "status", "ai-model", "ai-limit", "ai-status", "ask", "chat"]);
+    const utilityCommands = new Set(["hi", "help", "models", "model", "reset", "status", "ai-model", "ai-limit", "ai-status", "ask", "chat", "script"]);
     if (!utilityCommands.has(command)) return false;
 
+    if (command === "script") {
+      await message.channel.send(buildScriptPanelPayload());
+      return true;
+    }
     if (command === "hi") {
       if (args) {
         if (!this.canUseAiRole(message.member)) {
@@ -850,6 +903,7 @@ class StealthBot {
       "Commands:",
       `• \`${p}hi\``,
       `• \`${p}reset\``,
+      "• `?script` — Pro and Free loadstrings with private copy replies",
       "Slash: `/ask`, `/chat`, `/obf`, `/download`, `/ping`, `/help`",
     ];
     if (admin) {
@@ -1030,6 +1084,28 @@ class StealthBot {
         await Promise.allSettled(cleanup);
       }
     }
+  }
+
+  private async handleScriptButton(interaction: ButtonInteraction): Promise<boolean> {
+    let plan: "Pro" | "Free";
+    let loadstring: string;
+
+    if (interaction.customId === SCRIPT_PRO_BUTTON_ID) {
+      plan = "Pro";
+      loadstring = PRO_LOADSTRING;
+    } else if (interaction.customId === SCRIPT_FREE_BUTTON_ID) {
+      plan = "Free";
+      loadstring = FREE_LOADSTRING;
+    } else {
+      return false;
+    }
+
+    await interaction.reply({
+      content: `**${plan} Plan loadstring**\n\`\`\`lua\n${loadstring}\n\`\`\``,
+      flags: MessageFlags.Ephemeral,
+      allowedMentions: { parse: [] },
+    });
+    return true;
   }
 
   private async handleSlashCommand(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -1832,6 +1908,7 @@ class StealthBot {
       `\`${p}chat question\` — chat with the AI (with memory)`,
       `\`${p}hi\` / \`/hi\` — check that the bot is responding`,
       `\`${p}reset\` / \`/reset\` — clear your chat memory in this channel`,
+      "`?script` — show Pro and Free loadstrings with private copy replies",
       "`/obf` — obfuscate Lua/LuaU code",
       "`/download url:` — download media from TikTok, YouTube, Instagram, Spotify, etc.",
       "`/ping` — check bot latency",
