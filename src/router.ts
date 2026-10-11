@@ -210,7 +210,7 @@ export class PromptRouter {
     // 5. Stealth-X knowledge (overview entry when the message is on-brand but matches no specific topic)
     let matchedKnowledge: KnowledgeEntry[] = [];
     if (isStealthX) {
-      matchedKnowledge = getRelevantKnowledge(trimmedPrompt, { maxEntries: 2 });
+      matchedKnowledge = getRelevantKnowledge(trimmedPrompt, { maxEntries: 3 });
       if (matchedKnowledge.length === 0) matchedKnowledge = [OVERVIEW_ENTRY];
       const kbBlock = formatKnowledgeForPrompt(matchedKnowledge, firstForScope);
       if (kbBlock) {
