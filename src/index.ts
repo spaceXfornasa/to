@@ -1101,7 +1101,7 @@ class StealthBot {
     }
 
     await interaction.reply({
-      content: `${loadstring}`,
+      content: `**${plan} Plan loadstring**\n\`\`\`lua\n${loadstring}\n\`\`\``,
       flags: MessageFlags.Ephemeral,
       allowedMentions: { parse: [] },
     });
