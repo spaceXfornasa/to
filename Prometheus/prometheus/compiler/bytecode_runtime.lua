@@ -768,10 +768,9 @@ return (function(env,...)
         local params=meta.params
         local captures=meta.captures
         local decodedCache=nil
-        -- The entry prototype normally runs once; retaining its decoded form
-        -- only helps dumpers and consumes memory. Repeated child callbacks keep
-        -- the masked memoization path for performance.
-        if INSTRUCTIONCACHE and id~=1 then
+        -- Decoded numeric instructions are cached for all prototypes when InstructionCache is enabled.
+        -- Avoids re-decoding hot loops even if placed directly in root chunk (id == 1).
+        if INSTRUCTIONCACHE then
             decodedCache=decodedProtoCache[id]
             if not decodedCache then decodedCache={}; decodedProtoCache[id]=decodedCache end
         end
