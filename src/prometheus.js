@@ -7,7 +7,7 @@ const { randomInt } = require("crypto");
 // --- Resolve paths -----------------------------------------------------------
 const srcRoot = path.resolve(__dirname, "../Prometheus");
 
-const PRESETS = Object.freeze(["Minify", "Weak", "Standard", "Strong", "Maximum"]);
+const PRESETS = Object.freeze(["Minify", "Weak", "Performance", "Standard", "Strong", "Maximum"]);
 const LUA_VERSIONS = Object.freeze(["Lua51", "LuaU"]);
 
 // --- Lua file discovery ------------------------------------------------------

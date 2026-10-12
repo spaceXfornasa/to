@@ -151,6 +151,7 @@ const obfuscateCommand = new SlashCommandBuilder()
       .addChoices(
         { name: "Minify", value: "Minify" },
         { name: "Weak", value: "Weak" },
+        { name: "Performance (High FPS)", value: "Performance" },
         { name: "Standard (Roblox)", value: "Standard" },
         { name: "Strong", value: "Strong" },
         { name: "Maximum", value: "Maximum" },
