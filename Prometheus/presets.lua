@@ -91,8 +91,34 @@ return {
 		},
 	},
 
+	-- Performance: Ultra-light VM profile specifically tuned for maximum framerate in RenderStepped / Heartbeat loops.
+	["Performance"] = {
+		LuaVersion = "LuaU",
+		VarNamePrefix = "",
+		NameGenerator = "MangledShuffled",
+		PrettyPrint = false,
+		NumberFormat = "MixedHex",
+		Seed = 0,
+		Steps = {
+			{
+				Name = "Vmify",
+				Settings = {
+					YieldEvery = 0,
+					NoiseRate = 0,
+					FrameConstantCache = true,
+					ConstantCacheSlots = 64,
+					IntegrityStep = 8,
+					InstructionCache = true,
+					VerifyOnce = true,
+					TraceGuardEvery = 0,
+					HandlerWrapperNoise = false,
+				},
+			},
+		},
+	},
+
 	-- V2 Standard: balanced protection and runtime cost.
-	-- Adds light anti-dump trace poison and periodic runtime sanity checks.
+	-- Optimized for smooth 60+ FPS in game loops (removes periodic pcall GC spikes and redundant noise).
 	["Standard"] = {
 		LuaVersion = "LuaU",
 		VarNamePrefix = "",
@@ -113,14 +139,14 @@ return {
 				Name = "Vmify",
 				Settings = {
 					YieldEvery = 0,
-					NoiseRate = 72,
+					NoiseRate = 128,
 					FrameConstantCache = true,
-					ConstantCacheSlots = 32,
-					IntegrityStep = 2,
+					ConstantCacheSlots = 64,
+					IntegrityStep = 4,
 					InstructionCache = true,
 					VerifyOnce = true,
-					TraceGuardEvery = 256,
-					HandlerWrapperNoise = true,
+					TraceGuardEvery = 0,
+					HandlerWrapperNoise = false,
 				},
 			},
 		},
