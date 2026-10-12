@@ -581,6 +581,7 @@ return (function(env,...)
     local nilSentinel={}
     local decodedProtoCache={}
     local verifiedProtoCache={}
+    local globalConstantCache={}
     TRACEHELPERS
     local function verifyProto(pid,proto)
         if INTEGRITYSTEP<=0 then return true end
@@ -613,14 +614,10 @@ return (function(env,...)
         return true
     end
     local function constant(frame,id)
-        local cache=frame.constantCache
-        if cache then
-            local slot=(id*CONSTCACHEMUL)%CONSTCACHESLOTS+1
-            if cache[1][slot]==id then
-                local cached=cache[2][slot]
-                if cached==nilSentinel then return nil end
-                return cached
-            end
+        local cached=globalConstantCache[id]
+        if cached~=nil then
+            if cached==nilSentinel then return nil end
+            return cached
         end
         local entry=pool[id]; local mode=entry[CMODE]; local key=readWord(entry[CKEY],1); local bytes=entry[CBYTES]
         local byteCount=#bytes/wireByteWidth
@@ -668,10 +665,7 @@ return (function(env,...)
         elseif tag==3 then value=true
         elseif tag==4 then value=false
         else value=nil end
-        if cache then
-            local slot=(id*CONSTCACHEMUL)%CONSTCACHESLOTS+1
-            cache[1][slot]=id; cache[2][slot]=value==nil and nilSentinel or value
-        end
+        globalConstantCache[id]=value==nil and nilSentinel or value
         return value
     end
     YIELDHELPERS
@@ -757,8 +751,6 @@ return (function(env,...)
     if handlerCount~=HANDLERCOUNT or handlerSeal~=DISPATCHSEAL then error(ERRORDISPATCH,0) end
     run=function(id,captured,args)
         STARTGUARD
-        local frameConstantCacheEnabled=FRAMECONSTANTCACHE
-        local localConstantCache=frameConstantCacheEnabled and {{},{}} or nil
         local proto=prototypes[id]; verifyProto(id,proto)
         local stream=proto[PSTREAM]
         local meta=protoMeta(id,proto)
@@ -836,10 +828,6 @@ return (function(env,...)
             handler(frame,a,b,c)
         end
         local finalStatus, finalResult, finalTailFunction, finalTailArgs = frame.status, frame.result, frame.tailFunction, frame.tailArgs
-        if localConstantCache then
-            for _,bucket in pairs(localConstantCache) do for k in pairs(bucket) do bucket[k]=nil end end
-            for k in pairs(localConstantCache) do localConstantCache[k]=nil end
-        end
         if finalStatus==TAIL then return finalTailFunction(unpackValues(finalTailArgs,1,finalTailArgs.n)) end
         return unpackValues(finalResult,1,finalResult.n)
     end
