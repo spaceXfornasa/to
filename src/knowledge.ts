@@ -20,7 +20,7 @@ export type KnowledgeEntry = {
   facts: string[];
 };
 
-export const KB_VERSION = "2026-10-11-stealthx-8";
+export const KB_VERSION = "2026-10-15-stealthx-9";
 
 export const MODELS = [
   "gemma4:31b",
@@ -49,7 +49,7 @@ export const KB_RULES = [
   "Reset HWID removes device bindings but does not replace the key. Rotate Key creates a new key and invalidates the old key but preserves the plan, expiry, and device bindings. Never confuse these actions.",
   "Never ask users to send passwords, OTPs, session cookies/tokens, or a full license key in chat. Do not expose admin-only settings, private credentials, or internal secrets.",
   "For personal/live state (payment approval, license validity, remaining quota, current device binding, cooldown readiness, active scripts, executor compatibility, or outages), do not guess. Direct the user to the relevant dashboard, checkout, status page, or official support.",
-  "If a policy or answer is not covered by these facts, say that it is not confirmed and direct the user to the official Discord ticket route or support@bytecode.my.id.",
+  "If a policy or answer is not covered by these facts, say that it is not confirmed and direct the user to the official Discord ticket route or support@getstealthx.site.",
 ] as const;
 
 export const KNOWLEDGE_BASE: KnowledgeEntry[] = [
@@ -66,20 +66,20 @@ export const KNOWLEDGE_BASE: KnowledgeEntry[] = [
     ],
     weakKeywords: ["website", "web", "url", "link", "tautan", "alamat", "dashboard", "docs", "pricing", "discord", "status"],
     facts: [
-      "Main website: https://bytecode.my.id/ .",
-      "Pricing section: https://bytecode.my.id/#pricing .",
-      "Documentation and quick start: https://bytecode.my.id/docs/ .",
-      "Login: https://bytecode.my.id/login/ . Registration: https://bytecode.my.id/login?mode=signup .",
-      "Account dashboard: https://bytecode.my.id/dashboard/ .",
-      "Checkout entry: https://bytecode.my.id/checkout/?product=roblox&plan=weekly for Basic; replace plan with monthly for Plus or lifetime for Pro. The checkout page is the final place to confirm current price and payment availability.",
-      "Redeem: https://bytecode.my.id/redeem/ . Reset HWID: https://bytecode.my.id/reset-hwid/ .",
-      "Public Script Hub: https://bytecode.my.id/scripts/ . A script detail uses https://bytecode.my.id/scripts/?id={slug} .",
-      "Terms: https://bytecode.my.id/terms/ . Privacy: https://bytecode.my.id/privacy/ . Cookies: https://bytecode.my.id/cookies/ .",
+      "Main website: https://getstealthx.site/ .",
+      "Pricing section: https://getstealthx.site/#pricing .",
+      "Documentation and quick start: https://getstealthx.site/docs/ .",
+      "Login: https://getstealthx.site/login/ . Registration: https://getstealthx.site/login?mode=signup .",
+      "Account dashboard: https://getstealthx.site/dashboard/ .",
+      "Checkout entry: https://getstealthx.site/checkout/?product=roblox&plan=weekly for Basic; replace plan with monthly for Plus or lifetime for Pro. The checkout page is the final place to confirm current price and payment availability.",
+      "Redeem: https://getstealthx.site/redeem/ . Reset HWID: https://getstealthx.site/reset-hwid/ .",
+      "Public Script Hub: https://getstealthx.site/scripts/ . A script detail uses https://getstealthx.site/scripts/?id={slug} .",
+      "Terms: https://getstealthx.site/terms/ . Privacy: https://getstealthx.site/privacy/ . Cookies: https://getstealthx.site/cookies/ .",
       "Service status page: https://status.stealth-x.workers.dev/ . Use this page for current incidents rather than guessing from source code.",
-      "Canonical Discord redirect in repository configuration: https://bytecode.my.id/discord . The repository also contains a conflicting direct invite URL; use the canonical redirect instead of inventing or choosing another invite.",
-      "Support email: support@bytecode.my.id . General contact email: contact@bytecode.my.id .",
-      "Lua loader: https://api.bytecode.my.id/loader.lua . Always use the API subdomain for the loader, not https://bytecode.my.id/loader.lua .",
-      "Public raw-script URL pattern: https://api.bytecode.my.id/raw/scripts/{slug}.lua . A slug must come from the current public script catalog; do not invent one.",
+      "Canonical Discord redirect in repository configuration: https://getstealthx.site/discord . The repository also contains a conflicting direct invite URL; use the canonical redirect instead of inventing or choosing another invite.",
+      "Support email: support@getstealthx.site . General contact email: contact@getstealthx.site .",
+      "Lua loader: https://api.getstealthx.site/loader.lua . Always use the API subdomain for the loader, not https://getstealthx.site/loader.lua .",
+      "Public raw-script URL pattern: https://api.getstealthx.site/raw/scripts/{slug}.lua . A slug must come from the current public script catalog; do not invent one.",
     ],
   },
   {
@@ -120,8 +120,8 @@ export const KNOWLEDGE_BASE: KnowledgeEntry[] = [
     ],
     weakKeywords: ["beli", "buy", "purchase", "order", "checkout", "renew", "renewal", "upgrade", "downgrade", "refund", "dana", "cancel", "perpanjang", "paket", "license", "lisensi"],
     facts: [
-      "To buy a paid plan: open https://bytecode.my.id/#pricing, choose Basic, Plus, or Pro, sign in or create an account if asked, then complete checkout at https://bytecode.my.id/checkout/ . The checkout URL uses product=roblox and the internal plan ID: weekly for Basic, monthly for Plus, lifetime for Pro.",
-      "To create an account, use https://bytecode.my.id/login?mode=signup . Login is at https://bytecode.my.id/login/ .",
+      "To buy a paid plan: open https://getstealthx.site/#pricing, choose Basic, Plus, or Pro, sign in or create an account if asked, then complete checkout at https://getstealthx.site/checkout/ . The checkout URL uses product=roblox and the internal plan ID: weekly for Basic, monthly for Plus, lifetime for Pro.",
+      "To create an account, use https://getstealthx.site/login?mode=signup . Login is at https://getstealthx.site/login/ .",
       "When purchasing against an existing license, selecting the same plan is a renewal; selecting a higher plan is an upgrade. A lower plan is not supported for the same license; start a new license instead.",
       "After a successful PayPal payment confirmation/capture, the license is processed automatically. QRIS orders require the manual verification flow in a Discord ticket before activation.",
       "The audited checkout defaults a pending order expiry to 30 minutes, but this duration is configurable. Do not promise that an expired order can still be paid; instruct the user to reopen checkout and inspect the current order state.",
@@ -142,7 +142,7 @@ export const KNOWLEDGE_BASE: KnowledgeEntry[] = [
       "QRIS: select QRIS at checkout, follow the Discord ticket flow, submit payment proof in the ticket, and wait for manual admin verification. After verification, refresh the Dashboard to check the license status.",
       "The audited backend confirms a manual QRIS flow. Some checkout copy mentions local e-wallets, but the inspected backend did not confirm separate e-wallet handlers; do not promise DANA, GoPay, bank transfer, or other local payment methods unless the current checkout explicitly offers them.",
       "QRIS availability can depend on runtime configuration and user region/IP. The repository snapshot cannot confirm whether QRIS or PayPal is enabled for a specific user right now.",
-      "For a payment that is pending, missing, or disputed, do not ask for passwords or payment account credentials. Direct the user to their checkout/dashboard and the official Discord ticket or support@bytecode.my.id.",
+      "For a payment that is pending, missing, or disputed, do not ask for passwords or payment account credentials. Direct the user to their checkout/dashboard and the official Discord ticket or support@getstealthx.site.",
     ],
   },
   {
@@ -157,12 +157,12 @@ export const KNOWLEDGE_BASE: KnowledgeEntry[] = [
     ],
     weakKeywords: ["loader", "inject", "execute", "executor", "key", "license", "lisensi", "error", "expired", "script", "load", "run"],
     facts: [
-      "The documented Roblox Lua loader snippet is:\ngetgenv().Key = \"YOUR_KEY_HERE\"\nloadstring(game:HttpGet(\"https://api.bytecode.my.id/loader.lua\"))()",
-      "Free access/key is described as being obtained through the official Discord community flow. Start from https://bytecode.my.id/discord and follow the current official instructions; the audited repository does not establish a permanent channel-specific claim URL. Paid-plan keys are available through the authenticated Dashboard after purchase processing.",
+      "The documented Roblox Lua loader snippet is:\ngetgenv().Key = \"YOUR_KEY_HERE\"\nloadstring(game:HttpGet(\"https://api.getstealthx.site/loader.lua\"))()",
+      "Free access/key is described as being obtained through the official Discord community flow. Start from https://getstealthx.site/discord and follow the current official instructions; the audited repository does not establish a permanent channel-specific claim URL. Paid-plan keys are available through the authenticated Dashboard after purchase processing.",
       "Replace YOUR_KEY_HERE with the user's own full, unmodified active license key. The repository's documented key prefixes include sk-stx- and sk-cdex-; do not ask users to paste their full key into the Discord conversation.",
-      "Use https://api.bytecode.my.id/loader.lua as the loader URL. The Worker explicitly rejects the website host for this route with a subdomain_required error, so https://bytecode.my.id/loader.lua is not the correct loader endpoint.",
+      "Use https://api.getstealthx.site/loader.lua as the loader URL. The Worker explicitly rejects the website host for this route with a subdomain_required error, so https://getstealthx.site/loader.lua is not the correct loader endpoint.",
       "A loader key must be valid and active, not expired or revoked, and must satisfy device/HWID binding and execution quota checks. A correct code snippet cannot bypass those server-side checks.",
-      "For a missing key, sign in to https://bytecode.my.id/dashboard/ and check Subscription or Key History. If the key cannot be revealed, Rotate Key may issue a replacement and invalidate the old key.",
+      "For a missing key, sign in to https://getstealthx.site/dashboard/ and check Subscription or Key History. If the key cannot be revealed, Rotate Key may issue a replacement and invalidate the old key.",
       "For HWID mismatch, see the Reset HWID entry. For network/service issues, check https://status.stealth-x.workers.dev/ and contact official support if needed.",
       "The audited repository does not contain an authoritative compatibility list for specific executors. Do not guarantee support for a named executor or claim that use is undetectable/risk-free; advise using a compatible environment that supports the required Roblox Lua HTTP and loading functions.",
     ],
@@ -178,7 +178,7 @@ export const KNOWLEDGE_BASE: KnowledgeEntry[] = [
     ],
     weakKeywords: ["license", "licence", "lisensi", "key", "kunci", "expired", "kadaluarsa", "bocor", "leaked", "stolen", "hilang", "lost", "lupa", "forgot", "subscription", "riwayat"],
     facts: [
-      "For a lost or forgotten key, sign in at https://bytecode.my.id/login/, open https://bytecode.my.id/dashboard/, then check Subscription or Key History. Use Reveal Key if the dashboard offers it.",
+      "For a lost or forgotten key, sign in at https://getstealthx.site/login/, open https://getstealthx.site/dashboard/, then check Subscription or Key History. Use Reveal Key if the dashboard offers it.",
       "If a stored key cannot be revealed, Rotate Key can issue a new one; the previous key becomes invalid immediately. Save the new key and replace it in the local loader configuration.",
       "Do not ask the user to post a full key in Discord chat. The bot cannot confirm an individual license's validity, expiration, revocation, or remaining quota from static knowledge; ask them to inspect the authenticated Dashboard or contact support.",
       "If a key returns an error, check that the entire key was copied correctly, it is the user's own key, the license is active and not expired/revoked, the loader URL is correct, and the device binding and quota have not been rejected.",
@@ -195,7 +195,7 @@ export const KNOWLEDGE_BASE: KnowledgeEntry[] = [
     ],
     weakKeywords: ["device", "devices", "perangkat", "slot", "lock", "pc", "hp", "reset", "cooldown", "ganti", "pindah"],
     facts: [
-      "Reset HWID page: https://bytecode.my.id/reset-hwid/ . Sign in first, select the correct license, inspect its status, and use Reset HWID only when the server reports it is eligible/Ready.",
+      "Reset HWID page: https://getstealthx.site/reset-hwid/ . Sign in first, select the correct license, inspect its status, and use Reset HWID only when the server reports it is eligible/Ready.",
       "Reset HWID removes the selected license's current device/HWID bindings so a device can bind again. It does not replace or rotate the license key.",
       "Configured reset cooldowns: Basic (weekly) 7 days; Plus (monthly) 5 days; Pro (lifetime) 3 days. The backend clock is authoritative; the website/API's current eligibility and nextResetAt state take precedence.",
       "Free, expired, or revoked licenses are not eligible for the paid-plan Reset HWID flow in the audited backend. A reinstall, changing a device manually, or repeatedly pressing the button does not bypass the server-side cooldown.",
@@ -230,10 +230,10 @@ export const KNOWLEDGE_BASE: KnowledgeEntry[] = [
     ],
     weakKeywords: ["account", "akun", "email", "password", "sandi", "login", "masuk", "daftar", "signup", "oauth"],
     facts: [
-      "Login page: https://bytecode.my.id/login/ . Registration form: https://bytecode.my.id/login?mode=signup .",
+      "Login page: https://getstealthx.site/login/ . Registration form: https://getstealthx.site/login?mode=signup .",
       "The audited UI supports Google, GitHub, and email/password authentication. Use the original sign-in provider for the account in question.",
       "For password reset, enter the account email in the login identity field and select Forgot password; the configured Firebase flow sends a reset email. Check the email inbox/spam folder.",
-      "Accounts authenticated through different providers are not automatically merged just because they use the same email address. If the user chose a different provider and cannot access the account, direct them to support@bytecode.my.id.",
+      "Accounts authenticated through different providers are not automatically merged just because they use the same email address. If the user chose a different provider and cannot access the account, direct them to support@getstealthx.site.",
       "Do not request or accept a user's password, one-time password (OTP), session cookie, or login token in chat.",
     ],
   },
@@ -246,7 +246,7 @@ export const KNOWLEDGE_BASE: KnowledgeEntry[] = [
     ],
     weakKeywords: ["code", "kode", "klaim", "claim", "promo", "voucher", "kupon"],
     facts: [
-      "Redeem page: https://bytecode.my.id/redeem/ . The user must be signed in. The aliases /redeem-code and /redeem-key redirect to the same page.",
+      "Redeem page: https://getstealthx.site/redeem/ . The user must be signed in. The aliases /redeem-code and /redeem-key redirect to the same page.",
       "Enter a code supplied by an authorized administrator or official community event and submit Redeem Code. A successful redemption creates a unique license or extends a matching active license according to the code's plan rules.",
       "The audited implementation allows a voucher/redeem code to be claimed once per account. Weekly/monthly codes can extend an active license of the same plan or create a new license when there is no matching active license. Lifetime codes grant lifetime access only if the account does not already have an active lifetime license.",
       "Redeem activity is logged. Abuse may result in account suspension or an IP ban according to the documented policy. Do not promise a code will work without checking its validity, expiry, and eligibility through the official UI/backend.",
@@ -264,7 +264,7 @@ export const KNOWLEDGE_BASE: KnowledgeEntry[] = [
     ],
     weakKeywords: ["akun", "account", "subscription", "session", "login", "profil", "profile", "storage", "upload", "publish", "script", "menu"],
     facts: [
-      "Dashboard URL: https://bytecode.my.id/dashboard/ . It contains profile/personal information, sign-in and sessions, Subscription and Plan Licenses, purchase history, devices/HWID, Key History, and account activity.",
+      "Dashboard URL: https://getstealthx.site/dashboard/ . It contains profile/personal information, sign-in and sessions, Subscription and Plan Licenses, purchase history, devices/HWID, Key History, and account activity.",
       "Cloud Script Storage is personal script storage with quota. Public scripts can be managed/published through the script tools when the account and submission meet the UI/backend rules.",
       "Profile UI rules in the audited source: display name can be changed once every 7 days; profile image accepts JPG, PNG, or WebP up to 1 MB.",
       "Do not claim that an account's upload quota, subscription status, current license list, or activity history has a particular value unless a trusted authenticated runtime result provides it.",
@@ -280,9 +280,9 @@ export const KNOWLEDGE_BASE: KnowledgeEntry[] = [
     ],
     weakKeywords: ["script", "scripts", "catalog", "list", "game", "roblox", "upload", "publish", "active", "available"],
     facts: [
-      "Public Script Hub: https://bytecode.my.id/scripts/ . Public script detail pages use https://bytecode.my.id/scripts/?id={slug} .",
+      "Public Script Hub: https://getstealthx.site/scripts/ . Public script detail pages use https://getstealthx.site/scripts/?id={slug} .",
       "The public catalog is dynamic and its current entries, publication state, votes, version, and source permission come from the live API/database. Do not invent script names, availability, compatibility, or version numbers from static knowledge.",
-      "A public raw source follows https://api.bytecode.my.id/raw/scripts/{slug}.lua only when a valid current public slug exists. Do not manufacture a slug or imply every catalog entry exposes raw source.",
+      "A public raw source follows https://api.getstealthx.site/raw/scripts/{slug}.lua only when a valid current public slug exists. Do not manufacture a slug or imply every catalog entry exposes raw source.",
       "The audited UI supports uploading/publishing a Lua script with a game name and Roblox Place ID when its permissions and backend checks allow it. Some vote and management actions require login.",
       "If asked which scripts are currently available or which version is latest, use live catalog information when available; otherwise direct the user to the Script Hub.",
     ],
@@ -312,8 +312,8 @@ export const KNOWLEDGE_BASE: KnowledgeEntry[] = [
     ],
     weakKeywords: ["support", "help", "bantuan", "admin", "tiket", "ticket", "komunitas", "community", "hubungi", "lapor", "report", "cs", "moderator"],
     facts: [
-      "Support is handled through the official Discord ticket flow, especially for QRIS manual verification and license/technical problems. Start from https://bytecode.my.id/discord to use the canonical Discord redirect configured by the repository.",
-      "Technical support email: support@bytecode.my.id . General contact email: contact@bytecode.my.id .",
+      "Support is handled through the official Discord ticket flow, especially for QRIS manual verification and license/technical problems. Start from https://getstealthx.site/discord to use the canonical Discord redirect configured by the repository.",
+      "Technical support email: support@getstealthx.site . General contact email: contact@getstealthx.site .",
       "If an answer is not covered by the verified knowledge, or a user needs a payment/license/account decision, direct them to the official ticket/support flow. Do not claim a ticket has been opened or a payment has been approved unless a system action or trusted live result confirms it.",
     ],
   },
@@ -341,7 +341,7 @@ export const KNOWLEDGE_BASE: KnowledgeEntry[] = [
     ],
     weakKeywords: ["terms", "privacy", "refund", "policy", "kebijakan", "aturan", "cookies", "data"],
     facts: [
-      "Terms of Service: https://bytecode.my.id/terms/ . Privacy Policy: https://bytecode.my.id/privacy/ . Cookie Policy: https://bytecode.my.id/cookies/ .",
+      "Terms of Service: https://getstealthx.site/terms/ . Privacy Policy: https://getstealthx.site/privacy/ . Cookie Policy: https://getstealthx.site/cookies/ .",
       "The repository Terms of Service says completed purchases are final and non-refundable once the digital license has been generated or delivered. Refer to the published Terms and support for case-specific disputes; do not promise a refund exception.",
       "Never ask for or repeat passwords, OTPs, session cookies/tokens, or full license keys. Do not expose admin-only configuration, private credentials, account records, or internal secrets in customer-facing responses.",
     ],
