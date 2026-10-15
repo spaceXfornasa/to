@@ -35,6 +35,7 @@ import {
   handleScraperMessage,
 } from "./scraper";
 import { getRoleCommand, handleRoleButton, handleRoleCommand } from "./role";
+import { getUpdateCommand, handleUpdateCommand } from "./update";
 import { TavilySearchManager } from "./search";
 
 const DISCORD_USER_AGENT = "StealthAI Discord Bot/1.0";
@@ -295,6 +296,7 @@ function buildSlashCommands(): (SlashCommandBuilder | SlashCommandOptionsOnlyBui
     getDownloadCommand(),
     getPingCommand(),
     getRoleCommand(),
+    getUpdateCommand(),
     new SlashCommandBuilder()
       .setName("ask")
       .setDescription("Ask the AI a question")
@@ -1132,6 +1134,10 @@ class StealthBot {
       await handleRoleCommand(interaction, this.config.adminIds);
       return;
     }
+    if (command === "upd") {
+      await handleUpdateCommand(interaction, this.config.adminIds);
+      return;
+    }
     const user = interaction.user;
 
     if (command === "hi") {
@@ -1920,6 +1926,8 @@ class StealthBot {
         `\`${p}models\` / \`/models\` — list available models`,
         `\`${p}model\` / \`/model\` — show the active model`,
         `\`${p}status\` / \`/status\` — bot status`,
+        `\`/role\` — send role verification panel`,
+        `\`/upd\` — send script update announcement`,
         `\`${p}ai-model <model>\`, \`${p}ai-limit <1-20>\`, \`${p}ai-clear-memory\`, \`${p}ai-status\``,
       );
     }

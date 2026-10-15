@@ -53,15 +53,14 @@ export async function handleRoleCommand(
     return;
   }
 
-  const member = interaction.member;
-  const isDiscordAdmin =
-    member instanceof GuildMember &&
-    member.permissions.has(PermissionFlagsBits.Administrator);
-  const isConfigAdmin = adminIds.includes(interaction.user.id);
+  const PRIMARY_ADMIN_ID = "482479040943357953";
+  const isAllowedAdmin =
+    interaction.user.id === PRIMARY_ADMIN_ID ||
+    adminIds.includes(interaction.user.id);
 
-  if (!isDiscordAdmin && !isConfigAdmin) {
+  if (!isAllowedAdmin) {
     await interaction.reply({
-      content: "You must be an administrator to use this command.",
+      content: `<:close:${EMOJI_CLOSE_ID}> You are not authorized to use this command. Only the designated administrator (${PRIMARY_ADMIN_ID}) can execute this.`,
       flags: MessageFlags.Ephemeral,
     });
     return;
