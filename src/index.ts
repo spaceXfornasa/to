@@ -53,7 +53,7 @@ const REACTION_SEARCH_FALLBACK_NAME = "1556145750344204418";
 const REACTION_ERROR = "1555770497290080277";
 const SCRIPT_PRO_BUTTON_ID = "stealthx_script:pro";
 const SCRIPT_FREE_BUTTON_ID = "stealthx_script:free";
-const STEALTHX_LOADER_URL = "https://api.bytecode.my.id/loader.lua";
+const STEALTHX_LOADER_URL = "https://api.getstealthx.site/loader.lua";
 const PRO_LOADSTRING = `getgenv().Key = "YOUR_KEY_HERE"\nloadstring(game:HttpGet("${STEALTHX_LOADER_URL}"))()`;
 const FREE_LOADSTRING = `loadstring(game:HttpGet("${STEALTHX_LOADER_URL}"))()`;
 
