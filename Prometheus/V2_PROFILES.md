@@ -20,11 +20,11 @@ Recommended default when execution performance matters.
 
 Goal: balanced protection and runtime cost.
 
-- Everything in V2Lite, with denser integrity sampling
+- One encrypted VM with randomized opcodes and one-time prototype integrity checks
 - Lightweight anti-dump environment noise
-- Periodic executor-safe trace sanity checks
-- Polymorphic handler wrapper noise
-- Still uses one final VM
+- Dense transient VM stack and direct execution index for cheaper hot callbacks
+- Static property reads/writes use a combined instruction; property names remain in the encrypted constant pool
+- No periodic trace checks or handler wrapper noise in this preset
 
 Recommended general-purpose profile.
 
@@ -68,10 +68,11 @@ The compiler can perform validation and randomization without adding that work t
 
 ## VM runtime hot-path optimization
 
-The VM runtime reader is optimized without changing preset strength or bypassing virtualization:
+The VM runtime reader is optimized while keeping virtualization:
 
 - Wire characters are indexed by byte code and read with `string.byte`, avoiding temporary one-character substring allocations while decoding words and constant bytes.
 - Each instruction's first encrypted word is reused for program-counter drift instead of being decoded a second time. When the instruction cache is enabled, this encrypted word is stored in a separately masked cache slot so cache hits do not reread it from the serialized stream.
-- Opcode randomization, encrypted instruction/constant streams, integrity digests, verification settings, anti-dump steps, noise instructions, and the `Standard` / `Strong` / `Maximum` VM pipeline settings remain in place.
+- Standard and Performance use dense stack slots and a direct frame execution index; encoded branch targets, encrypted instruction/constant streams, randomized opcodes, and integrity checks remain.
+- Static index operations combine a constant lookup and table access into one VM instruction.
 
-This reduces redundant work inside the interpreter; it does not remove the fundamental cost of virtualizing hot callbacks. Validate actual frame-time behavior in Roblox, because desktop Lua microbenchmarks are not a substitute for a Luau client benchmark.
+This reduces redundant work inside the interpreter; it does not remove the fundamental cost of virtualizing hot callbacks. Constants are cached in plaintext after first use during execution, so client-side obfuscation cannot guarantee secrecy against a live runtime inspector. Validate frame time in Roblox, because desktop Lua microbenchmarks are not a substitute for a Luau client benchmark.

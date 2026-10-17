@@ -50,7 +50,17 @@ Vmify.SettingsDescriptor = {
     InstructionCache = {
         type = "boolean",
         default = true,
-        description = "Cache decoded numeric instructions per prototype to avoid re-decoding hot loops. Keeps source constants encrypted."
+        description = "Cache decoded numeric instructions per prototype to avoid re-decoding hot loops. Constants decrypt on first use."
+    },
+    DenseStack = {
+        type = "boolean",
+        default = false,
+        description = "Use contiguous VM stack slots for faster push/pop in hot callbacks. Wire instructions and operands stay encrypted."
+    },
+    FastDispatch = {
+        type = "boolean",
+        default = false,
+        description = "Keep the execution index directly in hot VM frames while retaining encrypted branch targets."
     },
     VerifyOnce = {
         type = "boolean",
@@ -82,6 +92,8 @@ function Vmify:apply(ast, pipeline)
         IntegrityStep = self.IntegrityStep,
         TraceGuardEvery = self.TraceGuardEvery,
         InstructionCache = self.InstructionCache,
+        DenseStack = self.DenseStack,
+        FastDispatch = self.FastDispatch,
         VerifyOnce = self.VerifyOnce,
         YieldInterval = self.YieldInterval,
         HandlerWrapperNoise = self.HandlerWrapperNoise,

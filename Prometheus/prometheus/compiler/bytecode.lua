@@ -38,8 +38,8 @@ function C:temp()
 end
 
 function C:constant(value)
-    -- Deduplicate at build time only. Runtime still decrypts on demand, without
-    -- retaining plaintext. Keep NaN and signed zero semantics out of table keys.
+    -- Deduplicate at build time. Runtime decrypts on first use and caches the
+    -- value for speed. Keep NaN and signed zero semantics out of table keys.
     local kind=type(value)
     if kind=="nil" and self.nilConstant then return self.nilConstant end
     local ids=self.constantIds[kind]
@@ -135,7 +135,12 @@ function C:expr(n, wantMulti)
         local branch = self:emit(k == "OrExpression" and "JTRUE" or "JFALSE")
         self:emit("DROP"); self:expr(n.rhs); self:emit("SINGLE"); self:patch(branch)
     elseif k == "IndexExpression" then
-        self:expr(n.base); self:expr(n.index); self:emit("INDEX")
+        self:expr(n.base)
+        if n.index.kind == "StringExpression" or n.index.kind == "NumberExpression" then
+            self:emit("INDEXK", self:constant(n.index.value))
+        else
+            self:expr(n.index); self:emit("INDEX")
+        end
     elseif k == "FunctionCallExpression" or k == "FunctionCallStatement" then
         local returnMode=1
         if wantMulti and not n.isParenthesizedExpression then returnMode=nil end
@@ -177,7 +182,12 @@ function C:reference(n)
     if n.kind == "AssignmentVariable" or n.kind == "VariableExpression" then
         self:variable(n.scope, n.id, true)
     elseif n.kind == "AssignmentIndexing" or n.kind == "IndexExpression" then
-        self:expr(n.base); self:expr(n.index); self:emit("INDEXREF")
+        self:expr(n.base)
+        if n.index.kind == "StringExpression" or n.index.kind == "NumberExpression" then
+            self:emit("INDEXREFK", self:constant(n.index.value))
+        else
+            self:expr(n.index); self:emit("INDEXREF")
+        end
     else error("Numeric VM: unsupported assignment " .. n.kind) end
 end
 

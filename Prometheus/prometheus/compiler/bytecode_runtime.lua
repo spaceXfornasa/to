@@ -90,6 +90,8 @@ function R.emit(protos, constants, luaVersion, options)
     if traceGuardEvery < 0 then traceGuardEvery = 0 end
     traceGuardEvery = math.floor(traceGuardEvery)
     local instructionCache = options.InstructionCache ~= false and options.instructionCache ~= false
+    local denseStack = options.DenseStack == true or options.denseStack == true
+    local fastDispatch = options.FastDispatch == true or options.fastDispatch == true
     local verifyOnce = options.VerifyOnce ~= false and options.verifyOnce ~= false
     local yieldInterval = tonumber(options.YieldInterval or options.yieldInterval) or 0.035
     if yieldInterval < 0 then yieldInterval = 0 end
@@ -115,7 +117,10 @@ function R.emit(protos, constants, luaVersion, options)
     local dispatchSealMix,dispatchSealRemainderMix=math.random(1009,99991),math.random(11,997)
     local regMul, regAdd = math.random(3, 97), rand()
     local pcMul, pcAdd = math.random(3, 97), rand()
-    local stackMul, stackAdd = math.random(3, 97), rand()
+    -- Sparse VM stack keys turn nearly every push/pop into a hash-table access.
+    -- The stack is transient frame state, so dense slots do not expose the
+    -- encrypted bytecode, randomized opcode map, or encoded register operands.
+    local stackMul, stackAdd = denseStack and 1 or math.random(3, 97), denseStack and 0 or rand()
     local stateLive, stateDone = rand(), rand()
     while stateDone == stateLive do stateDone = rand() end
     local stateTail; repeat stateTail=rand() until stateTail~=stateLive and stateTail~=stateDone
@@ -161,9 +166,17 @@ function R.emit(protos, constants, luaVersion, options)
             "local key=popOne(); local obj=popOne(); local value=obj[key]; pushOne(value)",
             "do local key=popOne(); local obj=popOne(); local v=obj[key]; pushOne(v) end",
         },
+        INDEXK = {
+            "local obj=popOne(); pushOne(obj[constant(a)])",
+            "local obj=popOne(); local key=constant(a); pushOne(obj[key])",
+        },
         INDEXREF = {
             "local key=popOne(); local obj=popOne(); pushOne({obj,key})",
             "local key=popOne(); local obj=popOne(); local ref={obj,key}; pushOne(ref)",
+        },
+        INDEXREFK = {
+            "local obj=popOne(); pushOne({obj,constant(a)})",
+            "local obj=popOne(); local key=constant(a); pushOne({obj,key})",
         },
         DEREF = {
             "local ref=popOne(); pushOne(ref[1][ref[2]])",
@@ -299,6 +312,12 @@ function R.emit(protos, constants, luaVersion, options)
             "local fn,st,ctrl=cells[a][1],cells[b][1],cells[c][1]; local values=pack(fn(st,ctrl)); cells[c][1]=values[1]; pushPacket(values)",
         },
     }
+    if fastDispatch then
+        local target = "(a-"..pcAdd..")/"..pcMul
+        handlers.JUMP = {"position="..target}
+        handlers.JTRUE = {"if popOne() then position="..target.." end"}
+        handlers.JFALSE = {"if not popOne() then position="..target.." end"}
+    end
     -- Lua 5.1 commits assignments right-to-left; Luau commits left-to-right.
     if luaVersion == "Lua51" then
         -- Parentheses keep gsub's replacement count out of the handler variants.
@@ -338,7 +357,7 @@ function R.emit(protos, constants, luaVersion, options)
     local names = {}; for name in pairs(handlers) do names[#names+1]=name end
     table.sort(names); shuffle(names)
     local operandUses={
-        CONST={true},GLOBAL={true},GREF={true},GET={true},REF={true},NEW={true,true},ASSIGN={true},PACK={true},
+        CONST={true},GLOBAL={true},GREF={true},GET={true},REF={true},NEW={true,true},ASSIGN={true},PACK={true},INDEXK={true},INDEXREFK={true},
         FCALL1={true},FCALL0={true},GCALL1={true,true},GCALL0={true,true},METHOD={true},MCALL1={true,true},MCALL0={true,true},
         CLOSURE={true},APPEND={true,true},JUMP={true},JTRUE={true},JFALSE={true},
         FORPREP={true,true,true},FORCHECK={true,true,true},FORSTEP={true,true},ITERPREP={true,true,true},ITERNEXT={true,true,true},
@@ -778,18 +797,18 @@ return (function(env,...)
             FDRIFT=protoKey%DRIFTMOD,FSTATUS=LIVE,FNOISE=protoKey%NOISEMOD,
             FCONSTANTCACHE=localConstantCache,
         }
-        frame.position=PCMUL+PCADD+frame.drift
+        frame.position=INITIALPOSITION
         BUDGETDECL
         while frame.status==LIVE do
             BUDGETSTEP
-            local index=(frame.position-frame.drift-PCADD)/PCMUL
+            local index=INDEXEXPR
             local offset=(index-1)*wireWordWidth*4
-            local cacheBase=index*5
+            local cacheBase=index*CACHESTRIDE
             local opcode,a,b,c,wireDrift
             if decodedCache then
                 opcode=decodedCache[cacheBase-3]
                 if opcode~=nil then
-                    wireDrift=decodedCache[cacheBase-4]-CACHEMASKDRIFT
+                    CACHEDDRIFT
                     opcode=opcode-cacheKey
                     a=decodedCache[cacheBase-2]-CACHEMASKA
                     b=decodedCache[cacheBase-1]-CACHEMASKB
@@ -818,7 +837,7 @@ return (function(env,...)
                     key=(key*CIPHERMUL3+IADD34+protoKey)%CIPHERMOD; cipher=readWord(stream,offset+16); c=(cipher-key-index*4)%CIPHERMOD
                 end
                 if decodedCache then
-                    decodedCache[cacheBase-4]=wireDrift+CACHEMASKDRIFT
+                    STOREDRIFT
                     decodedCache[cacheBase-3]=opcode+cacheKey
                     decodedCache[cacheBase-2]=a+CACHEMASKA
                     decodedCache[cacheBase-1]=b+CACHEMASKB
@@ -827,8 +846,7 @@ return (function(env,...)
             end
             -- The first encrypted word was already read to decode the opcode.
             -- Reuse it here instead of decoding the same word again on every instruction.
-            frame.drift=(frame.drift+wireDrift)%DRIFTMOD
-            frame.position=(index+1)*PCMUL+PCADD+frame.drift
+            ADVANCEPOSITION
             local handler=dispatch[opcode]
             if not handler then error(ERRORINSTRUCTION,0) end
             handler(frame,a,b,c)
@@ -875,6 +893,9 @@ end)(getfenv and getfenv() or _ENV or _G,...)
     end
     local replacements={PROTOTYPES=array(serialized),CONSTANTS=array(encrypted),STRIDE=stride,SALT=salt,
         REGMUL=regMul,REGADD=regAdd,PCMUL=pcMul,PCADD=pcAdd,STACKMUL=stackMul,STACKADD=stackAdd,LIVE=stateLive,DONE=stateDone,TAIL=stateTail,
+        INITIALPOSITION=fastDispatch and "1" or pcMul.."+"..pcAdd.."+frame.drift",
+        INDEXEXPR=fastDispatch and "frame.position" or "(frame.position-frame.drift-"..pcAdd..")/"..pcMul,
+        ADVANCEPOSITION=fastDispatch and "frame.position=index+1" or "frame.drift=(frame.drift+wireDrift)%"..driftMod..";frame.position=(index+1)*"..pcMul.."+"..pcAdd.."+frame.drift",
         YIELDEVERY=yieldEvery,YIELDINTERVAL=yieldInterval,FRAMECONSTANTCACHE=tostring(frameConstantCache),
         INTEGRITYSTEP=integrityStep,VERIFYONCE=tostring(verifyOnce),INSTRUCTIONCACHE=tostring(instructionCache),
         TRACEGUARDEVERY=traceGuardEvery,GUARDSALT=guardSalt,HANDLERS=table.concat(emittedHandlers,"\n"),
@@ -893,6 +914,9 @@ end)(getfenv and getfenv() or _ENV or _G,...)
         HANDLERCOUNT=#emittedHandlers,
          CONSTCACHESLOTS=constantCacheSlots,CONSTCACHEMUL=constantCacheMul,
          CACHEMASKA=cacheMaskA,CACHEMASKB=cacheMaskB,CACHEMASKC=cacheMaskC,CACHEMASKDRIFT=cacheMaskDrift,
+        CACHESTRIDE=fastDispatch and 4 or 5,
+        CACHEDDRIFT=fastDispatch and "" or "wireDrift=decodedCache[cacheBase-4]-"..cacheMaskDrift,
+        STOREDRIFT=fastDispatch and "" or "decodedCache[cacheBase-4]=wireDrift+"..cacheMaskDrift,
         TRACEHELPERS=traceHelpers,YIELDHELPERS=yieldHelpers,STARTGUARD=startGuard,BUDGETDECL=yieldDecl..traceDecl,BUDGETSTEP=yieldStep..traceStep,
         ERRORBYTECODE=string.format("%q",tostring(rand())..tostring(rand())),
         ERRORCONSTANT=string.format("%q",tostring(rand())..tostring(rand())),
