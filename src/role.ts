@@ -12,7 +12,7 @@ import {
 import { existsSync, promises as fs } from "node:fs";
 import { resolve } from "node:path";
 
-export const VERIFY_ROLE_ID = process.env.DISCORD_ALLOWED_AI_ROLE_ID?.trim() || "1549837787287654411";
+export const VERIFY_ROLE_ID = process.env.DISCORD_VERIFY_ROLE_ID?.trim() || "1549837787287654411";
 export const EMOJI_CHECK_ID = "1555773804095995964";
 export const EMOJI_CLOSE_ID = "1555770497290080277";
 export const VERIFY_BUTTON_CUSTOM_ID = "verify_member_role";

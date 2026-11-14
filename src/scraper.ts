@@ -30,6 +30,7 @@ const rateLimiter = require("./scraper/utils/rate-limiter");
 const logger = require("./scraper/utils/logger");
 const { cacheUrl, getCachedUrl } = require("./scraper/utils/url-cache");
 const config = require("./scraper/config");
+const { limiter: spamLimiter } = require("./rate-limit");
 
 export function getDownloadCommand(): SlashCommandBuilder | SlashCommandOptionsOnlyBuilder {
   return new SlashCommandBuilder()
@@ -479,6 +480,9 @@ export async function handleScraperMessage(message: Message): Promise<boolean> {
   }
 
   if (!detectedTarget) return false;
+
+  // Suppress repeated prompts without sending another bot message to the channel.
+  if (!spamLimiter.consume(message.author.id, "autoPrompt").allowed) return false;
 
   const cacheId = cacheUrl(detectedTarget.url);
   const promptPayload = createAutoDetectPrompt({

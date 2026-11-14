@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { once } from "node:events";
 import { dirname, resolve } from "node:path";
 import {
   ActivityType,
@@ -15,6 +16,7 @@ import {
   Partials,
   PermissionFlagsBits,
   REST,
+  RESTEvents,
   Routes,
   Options,
   SlashCommandBuilder,
@@ -36,6 +38,7 @@ import {
 import { getRoleCommand, handleRoleButton, handleRoleCommand } from "./role";
 import { getUpdateCommand, handleUpdateCommand } from "./update";
 import { TavilySearchManager } from "./search";
+const { limiter: spamLimiter } = require("./rate-limit");
 
 const DISCORD_USER_AGENT = "StealthAI Discord Bot/1.0";
 const AI_GATEWAY_USER_AGENT = "StealthAI AI Gateway Client/1.0";
@@ -44,8 +47,8 @@ const MAX_PERSISTED_MESSAGES_PER_SCOPE = 20;
 const STORAGE_SAVE_DELAY_MS = 1500;
 const REACTION_READ = "1555619682634039387";
 const REACTION_THINKING = "1556145966111793163";
-const AI_ALLOWED_ROLE_ID = process.env.DISCORD_ALLOWED_AI_ROLE_ID?.trim() || "1549837787287654411";
-const AI_CHANNEL_ID = process.env.DISCORD_AI_CHANNEL_ID?.trim() || "1555277857675022387";
+const AI_ALLOWED_ROLE_IDS = parseCsv(process.env.DISCORD_ALLOWED_AI_ROLE_ID?.trim() || "1549837787287654411");
+const AI_CHANNEL_IDS = parseCsv(process.env.DISCORD_AI_CHANNEL_ID?.trim() || "1555277857675022387");
 const REACTION_DONE_ID = "1555773804095995964";
 const REACTION_DONE_FALLBACK_NAME = "check";
 const REACTION_SEARCH_ID = process.env.DISCORD_REACTION_SEARCH_ID?.trim() || "1556145750344204418";
@@ -66,7 +69,7 @@ function buildScriptPanelPayload(): any {
         components: [
           {
             type: 10, // TextDisplay
-            content: `# Pro Plan\nPremium access with key authentication.\n\`\`\`lua\n${PRO_LOADSTRING}\n\`\`\`\n# Free Plan\nStandard access. No key required.\n**Desktop**\n\`\`\`lua\n${FREE_LOADSTRING}\n\`\`\``,
+            content: `# Premium\nPremium access with key authentication.\n\`\`\`lua\n${PRO_LOADSTRING}\n\`\`\`\n# Free Plan\nStandard access. No key required.\n**Desktop**\n\`\`\`lua\n${FREE_LOADSTRING}\n\`\`\``,
           },
         ],
       },
@@ -76,7 +79,7 @@ function buildScriptPanelPayload(): any {
           {
             type: 2, // Button
             style: 1,
-            label: "Copy Pro",
+            label: "Copy Premium",
             emoji: { id: "1558861149704036523", name: "unknown", animated: false },
             custom_id: SCRIPT_PRO_BUTTON_ID,
           },
@@ -527,11 +530,42 @@ class StealthBot {
       partials: [Partials.Channel],
     });
 
+    // Discord.js handles Discord REST retry scheduling. Observe errors without
+    // issuing extra API calls or printing secrets, and avoid a restart storm.
+    let lastRateLimitLogAt = 0;
+    this.client.rest.on(RESTEvents.RateLimited, (info) => {
+      const now = Date.now();
+      if (now - lastRateLimitLogAt < 30_000) return;
+      lastRateLimitLogAt = now;
+      const seconds = Math.ceil(info.retryAfter / 1000);
+      console.warn(`[Discord REST] Rate limited: scope=${info.scope} route=${info.route} retryAfter=${seconds}s. discord.js will handle waiting where possible.`);
+    });
+    this.client.rest.on(RESTEvents.Response, (_request, response) => {
+      if (![401, 403, 429].includes(response.status)) return;
+      const now = Date.now();
+      if (response.status === 429 && now - lastRateLimitLogAt < 30_000) return;
+      if (response.status === 429) lastRateLimitLogAt = now;
+      const retryAfter = response.headers.get("retry-after") ?? "not provided";
+      const scope = response.headers.get("x-ratelimit-scope") ?? "unspecified";
+      const contentType = response.headers.get("content-type")?.split(";")[0] ?? "unknown";
+      console.warn(`[Discord REST] HTTP ${response.status} (scope=${scope}, retry-after=${retryAfter}, content-type=${contentType}).`);
+      if (response.status === 429) {
+        console.warn("[Discord REST] Check for shared hosting-IP restrictions; avoid repeated restarts. Contact Wispbyte support if persistent.");
+      } else if (response.status === 401) {
+        console.error("[Discord REST] Unauthorized: verify DISCORD_BOT_TOKEN. Do not post it in chat or logs.");
+      }
+    });
+
     this.client.once(Events.ClientReady, (client) => {
       this.readyAt = Date.now();
-      this.updatePresence();
-      console.log(`Logged in as ${client.user.tag}`);
-      console.log(`Gateway: connected | Guilds: ${client.guilds.cache.size}`);
+      console.log(`[Discord] ONLINE: Logged in as ${client.user.tag}`);
+      console.log(`[Discord] Gateway connected | Guilds: ${client.guilds.cache.size}`);
+      try {
+        this.updatePresence();
+      } catch (error) {
+        // A failed presence update must not prevent slash command registration.
+        console.error("[Discord] Failed to set presence:", error);
+      }
       void this.registerSlashCommands();
     });
 
@@ -549,6 +583,14 @@ class StealthBot {
       if (interaction.isButton()) {
         void (async () => {
           try {
+            const buttonId = interaction.customId;
+            if (buttonId.startsWith("autodl:") || buttonId === "verify_member_role" || buttonId === "p_356353929912520705" || buttonId.startsWith("stealthx_script:")) {
+              const limit = spamLimiter.consume(interaction.user.id, "button");
+              if (!limit.allowed) {
+                await interaction.reply({ content: `Too many actions. Try again in ${Math.ceil(limit.retryAfterMs / 1000)}s.`, flags: MessageFlags.Ephemeral }).catch(() => {});
+                return;
+              }
+            }
             const handledScraper = await handleScraperButton(interaction);
             if (handledScraper) return;
             const handledRole = await handleRoleButton(interaction);
@@ -568,14 +610,60 @@ class StealthBot {
       });
     });
 
-    this.client.on(Events.Error, (error) => console.error("Discord client error:", error));
-    this.client.on(Events.Warn, (info) => console.warn("Discord warning:", info));
+    this.client.on(Events.Error, (error) => console.error("[Discord] Client error:", error));
+    this.client.on(Events.Warn, (info) => console.warn("[Discord] Warning:", info));
+    this.client.on(Events.ShardReady, (shardId) => {
+      console.log(`[Discord] Shard ${shardId} READY`);
+    });
+    this.client.on(Events.ShardReconnecting, (shardId) => {
+      console.warn(`[Discord] Shard ${shardId} reconnecting...`);
+    });
+    this.client.on(Events.ShardDisconnect, (event, shardId) => {
+      console.error(`[Discord] Shard ${shardId} disconnected: code=${event.code} reason=${event.reason || "(none)"}`);
+      if (event.code === 4014) {
+        console.error("[Fix] Enable Message Content Intent in Discord Developer Portal > Bot > Privileged Gateway Intents.");
+      } else if (event.code === 4013) {
+        console.error("[Fix] Invalid Gateway intents: check your Discord bot's intent configuration.");
+      }
+    });
+    this.client.on(Events.ShardError, (error, shardId) => {
+      console.error(`[Discord] Shard ${shardId} WebSocket error: ${error.message}`);
+    });
   }
 
   async start(): Promise<void> {
+    console.log(`[Startup] Node ${process.version} | Loading storage...`);
     await this.store.load();
+    console.log("[Startup] Storage loaded. Installing shutdown handlers...");
     this.installShutdownHandlers();
-    await this.client.login(this.config.token);
+
+    // Previous behavior: a hard 60-second timeout crashed the process, causing
+    // Wispbyte to restart repeatedly against Discord's 429 rate limit. Instead,
+    // allow discord.js to respect Retry-After and retain a pending login.
+    const noticeMs = clampInt(process.env.DISCORD_STARTUP_TIMEOUT_MS, 60000, 15000, 180000);
+    const startedAt = Date.now();
+    console.log("[Startup] Connecting to Discord (rate-limit-aware; no forced restart)...");
+    const connectionNotice = setInterval(() => {
+      if (this.client.isReady()) return;
+      const seconds = Math.floor((Date.now() - startedAt) / 1000);
+      console.warn(`[Startup] Discord is not READY after ${seconds}s. Keeping process alive while connection is pending; check HTTP 429 logs and Wispbyte outbound IP.`);
+    }, noticeMs);
+
+    try {
+      await this.client.login(this.config.token);
+      if (!this.client.isReady()) {
+        console.log("[Startup] Gateway login established; waiting for Discord READY...");
+        await once(this.client, Events.ClientReady);
+      }
+      console.log("[Startup] Bot is ready to receive Discord events.");
+    } catch (error) {
+      console.error("[Startup] Discord login failed:", error instanceof Error ? error.message : error);
+      console.error("[Startup] Fix the reported error before retrying. If Discord returns HTTP 429, allow cooldown; ask Wispbyte about a restricted/shared outbound IP.");
+      await this.client.destroy();
+      throw error;
+    } finally {
+      clearInterval(connectionNotice);
+    }
   }
 
   private installShutdownHandlers(): void {
@@ -726,7 +814,7 @@ class StealthBot {
       // Keep ?script available even when the general bot prefix is configured differently.
       prompt = content.slice(1).trim();
       source = "prefix";
-    } else if (message.channelId === AI_CHANNEL_ID) {
+    } else if (AI_CHANNEL_IDS.includes(message.channelId)) {
       // Dedicated Saviera channel: every normal message is an AI prompt.
       prompt = content;
       source = "channel";
@@ -739,6 +827,7 @@ class StealthBot {
       if (message.attachments.size > 0) {
         prompt = ATTACHMENT_ONLY_PROMPT;
       } else {
+        if (!spamLimiter.consume(message.author.id, "utility").allowed) return;
         await message.reply({
           content: `Call me with \`@bot question\` or \`${this.config.prefix}question\`. Type \`${this.config.prefix}help\` for commands.`,
           allowedMentions: { repliedUser: false, parse: [] },
@@ -749,6 +838,13 @@ class StealthBot {
 
     const firstWord = prompt.split(/\s+/)[0]?.toLowerCase() ?? "";
     const rest = prompt.slice(firstWord.length).trim();
+    const utilityCommands = new Set(["hi", "help", "models", "model", "reset", "status", "ai-model", "ai-limit", "ai-status", "ai-clear-memory", "ai-reset-all", "script"]);
+    const adminCommands = new Set(["models", "model", "status", "ai-model", "ai-limit", "ai-status", "ai-clear-memory", "ai-reset-all"]);
+    const category = source === "prefix" && firstWord === "script" ? "panel"
+      : source === "prefix" && adminCommands.has(firstWord) ? "admin"
+      : source === "prefix" && utilityCommands.has(firstWord) && !(firstWord === "hi" && rest) ? "utility"
+      : source === "mention" && firstWord === "help" && !rest ? "utility" : "ai";
+    if (!spamLimiter.consume(message.author.id, category).allowed) return;
     if (source === "prefix" && await this.tryTextCommand(message, firstWord, rest)) return;
     if (source === "mention" && firstWord === "help" && !rest) {
       await this.sendTextHelp(message);
@@ -764,7 +860,7 @@ class StealthBot {
   }
 
   private async tryTextCommand(message: Message, command: string, args: string): Promise<boolean> {
-    const utilityCommands = new Set(["hi", "help", "models", "model", "reset", "status", "ai-model", "ai-limit", "ai-status", "ask", "chat", "script"]);
+    const utilityCommands = new Set(["hi", "help", "models", "model", "reset", "status", "ai-model", "ai-limit", "ai-status", "ai-clear-memory", "ai-reset-all", "ask", "chat", "script"]);
     if (!utilityCommands.has(command)) return false;
 
     if (command === "script") {
@@ -903,7 +999,7 @@ class StealthBot {
       "Commands:",
       `• \`${p}hi\``,
       `• \`${p}reset\``,
-      "• `?script` — Pro and Free loadstrings with private copy replies",
+      "• `?script` — Premium and Free loadstrings with private copy replies",
       "Slash: `/ask`, `/chat`, `/download`, `/ping`, `/help`",
     ];
     if (admin) {
@@ -934,10 +1030,10 @@ class StealthBot {
 
     const roles = member.roles;
     if (Array.isArray(roles)) {
-      return roles.includes(AI_ALLOWED_ROLE_ID);
+      return AI_ALLOWED_ROLE_IDS.some((roleId) => roles.includes(roleId));
     }
 
-    return roles.cache.has(AI_ALLOWED_ROLE_ID);
+    return AI_ALLOWED_ROLE_IDS.some((roleId) => roles.cache.has(roleId));
   }
 
   private async denyAiRole(message: Message): Promise<void>;
@@ -1087,21 +1183,18 @@ class StealthBot {
   }
 
   private async handleScriptButton(interaction: ButtonInteraction): Promise<boolean> {
-    let plan: "Pro" | "Free";
     let loadstring: string;
 
     if (interaction.customId === SCRIPT_PRO_BUTTON_ID) {
-      plan = "Pro";
       loadstring = PRO_LOADSTRING;
     } else if (interaction.customId === SCRIPT_FREE_BUTTON_ID) {
-      plan = "Free";
       loadstring = FREE_LOADSTRING;
     } else {
       return false;
     }
 
     await interaction.reply({
-      content: `**${plan} Plan loadstring**\n\`\`\`lua\n${loadstring}\n\`\`\``,
+      content: loadstring,
       flags: MessageFlags.Ephemeral,
       allowedMentions: { parse: [] },
     });
@@ -1116,6 +1209,15 @@ class StealthBot {
     }
 
     const command = interaction.commandName;
+    const adminCommands = new Set(["role", "upd", "models", "model", "status", "ai-model", "ai-limit", "ai-status", "ai-clear-memory"]);
+    const category = command === "ask" || command === "chat" ? "ai"
+      : command === "role" || command === "upd" ? "publish"
+      : adminCommands.has(command) ? "admin" : "utility";
+    const limit = spamLimiter.consume(interaction.user.id, category);
+    if (!limit.allowed) {
+      await interaction.reply({ content: `Too many requests. Try again in ${Math.ceil(limit.retryAfterMs / 1000)}s.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+      return;
+    }
     if (command === "download") {
       await handleDownloadCommand(interaction);
       return;
@@ -1908,7 +2010,7 @@ class StealthBot {
       `\`${p}chat question\` — chat with the AI (with memory)`,
       `\`${p}hi\` / \`/hi\` — check that the bot is responding`,
       `\`${p}reset\` / \`/reset\` — clear your chat memory in this channel`,
-      "`?script` — show Pro and Free loadstrings with private copy replies",
+      "`?script` — show Premium and Free loadstrings with private copy replies",
       "`/download url:` — download media from TikTok, YouTube, Instagram, Spotify, etc.",
       "`/ping` — check bot latency",
     ];
@@ -1971,6 +2073,16 @@ function makeConfig(): BotConfig {
 }
 
 async function main(): Promise<void> {
+  console.log("[Startup] Stealth-X Discord Bot v3.0.0");
+  // Print only which required variables are present, NEVER their values.
+  const required = ["DISCORD_BOT_TOKEN", "DISCORD_GUILD_ID", "AI_GATEWAY_URL", "AI_GATEWAY_TOKEN"];
+  const missing = required.filter((name) => !envString(name));
+  if (missing.length > 0) {
+    console.error(`[Config] Missing required environment variable(s): ${missing.join(", ")}`);
+    console.error("[Config] Add them to Wispbyte Startup variables or a .env file in /home/container.");
+  } else {
+    console.log("[Config] All required environment variables are present (values hidden).");
+  }
   const config = makeConfig();
   const bot = new StealthBot(config);
   await bot.start();
