@@ -310,6 +310,7 @@ function buildSlashCommands(): (SlashCommandBuilder | SlashCommandOptionsOnlyBui
       .addAttachmentOption((o) => o.setName("file").setDescription("Image or code/text file (optional)").setRequired(false)),
     new SlashCommandBuilder().setName("hi").setDescription("Check that the bot is responding"),
     new SlashCommandBuilder().setName("help").setDescription("Show available commands"),
+    new SlashCommandBuilder().setName("script").setDescription("Show Premium and Free loadstrings with private copy buttons"),
     new SlashCommandBuilder().setName("models").setDescription("Admin: list the available AI models").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
     new SlashCommandBuilder().setName("model").setDescription("Admin: show the AI model used by this server").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
     new SlashCommandBuilder().setName("reset").setDescription("Clear your chat memory in this channel"),
@@ -512,7 +513,6 @@ class StealthBot {
       intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent,
         GatewayIntentBits.DirectMessages,
       ],
       // Keep only the caches this bot actually benefits from. This is important
@@ -1212,6 +1212,7 @@ class StealthBot {
     const adminCommands = new Set(["role", "upd", "models", "model", "status", "ai-model", "ai-limit", "ai-status", "ai-clear-memory"]);
     const category = command === "ask" || command === "chat" ? "ai"
       : command === "role" || command === "upd" ? "publish"
+      : command === "script" ? "panel"
       : adminCommands.has(command) ? "admin" : "utility";
     const limit = spamLimiter.consume(interaction.user.id, category);
     if (!limit.allowed) {
@@ -1244,6 +1245,10 @@ class StealthBot {
       const admin = this.isAdmin(user.id, guildId);
       // Admin help lists admin commands, so it is only shown privately.
       await interaction.reply({ content: this.helpText(admin), ephemeral: admin, allowedMentions: { parse: [] } });
+      return;
+    }
+    if (command === "script") {
+      await interaction.reply(buildScriptPanelPayload());
       return;
     }
     if (command === "models") {
@@ -1999,18 +2004,14 @@ class StealthBot {
   }
 
   private helpText(admin = false): string {
-    const p = this.config.prefix;
     const lines = [
       "**StealthAI Commands**",
       "`/ask prompt:` — ask the AI",
       "`/chat message:` — chat with the AI (with memory)",
-      `\`${p}question\` — chat with the AI`,
-      `@bot question — chat with the AI`,
-      `\`${p}ask question\` — chat with the AI`,
-      `\`${p}chat question\` — chat with the AI (with memory)`,
-      `\`${p}hi\` / \`/hi\` — check that the bot is responding`,
-      `\`${p}reset\` / \`/reset\` — clear your chat memory in this channel`,
-      "`?script` — show Premium and Free loadstrings with private copy replies",
+      "`@bot question` — chat with the AI",
+      "`/hi` — check that the bot is responding",
+      "`/reset` — clear your chat memory in this channel",
+      "`/script` — show Premium and Free loadstrings with private copy replies",
       "`/download url:` — download media from TikTok, YouTube, Instagram, Spotify, etc.",
       "`/ping` — check bot latency",
     ];
@@ -2018,12 +2019,12 @@ class StealthBot {
       lines.push(
         "",
         "**Admin**",
-        `\`${p}models\` / \`/models\` — list available models`,
-        `\`${p}model\` / \`/model\` — show the active model`,
-        `\`${p}status\` / \`/status\` — bot status`,
-        `\`/role\` — send role verification panel`,
-        `\`/upd\` — send script update announcement`,
-        `\`${p}ai-model <model>\`, \`${p}ai-limit <1-20>\`, \`${p}ai-clear-memory\`, \`${p}ai-status\``,
+        "`/models` — list available models",
+        "`/model` — show the active model",
+        "`/status` — bot status",
+        "`/role` — send role verification panel",
+        "`/upd` — send script update announcement",
+        "`/ai-model`, `/ai-limit`, `/ai-clear-memory`, `/ai-status`",
       );
     }
     return lines.join("\n");
